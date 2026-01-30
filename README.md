@@ -250,7 +250,7 @@ The generated proofs are designed to work with zk-email circuits that verify:
 
 ## License
 
-GPL-3.0 License - see [LICENSE](LICENSE) for details.
+BSD 3-Clause License - see [LICENSE](LICENSE) for details.
 
 ## Related Projects
 
