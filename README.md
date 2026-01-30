@@ -12,6 +12,8 @@ When someone passes away and their Farewell messages are released, claimers need
 
 This tool automates steps 1 and 2, making it easy to deliver farewell messages and generate the necessary proofs.
 
+**Full Guide**: See [docs/claimer-guide.md](docs/claimer-guide.md) for step-by-step instructions.
+
 ## Features
 
 - **Interactive CLI** with colorful, user-friendly interface
