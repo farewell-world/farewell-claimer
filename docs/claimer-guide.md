@@ -36,7 +36,7 @@ pip install -r requirements.txt
 
 ## Step 2: Claim and Decrypt the Message
 
-1. Go to the [Farewell UI](https://www.iampedro.com/farewell)
+1. Go to the [Farewell UI](https://farewell.world)
 2. Navigate to the **Claim** tab
 3. Enter the deceased user's address and message index
 4. Click **Mark Deceased** (if not already done)

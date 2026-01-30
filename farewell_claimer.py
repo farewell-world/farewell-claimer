@@ -17,7 +17,7 @@ Usage:
     python farewell_claimer.py -f message.json      # Load from file (explicit)
 
 Author: Farewell Protocol
-License: GPL-3.0
+License: BSD 3-Clause
 """
 
 import os
@@ -33,8 +33,8 @@ from email.mime.multipart import MIMEMultipart
 from email.utils import formatdate, make_msgid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple, Union
-from dataclasses import dataclass, field
+from typing import Optional, Dict, List, Tuple
+from dataclasses import dataclass
 
 try:
     from colorama import init, Fore, Back, Style
@@ -500,7 +500,7 @@ def create_farewell_email(
 Farewell-Hash: {content_hash}
 ---
 
-This message was sent via Farewell Protocol (https://www.iampedro.com/farewell)
+This message was sent via Farewell Protocol (https://farewell.world)
 A zk-email proof may be generated to verify delivery of this message.
 """
 
@@ -525,7 +525,7 @@ A zk-email proof may be generated to verify delivery of this message.
         </div>
 
         <p style="color: #666; font-size: 12px; margin-top: 20px;">
-            This message was sent via <a href="https://www.iampedro.com/farewell">Farewell Protocol</a>.<br>
+            This message was sent via <a href="https://farewell.world">Farewell Protocol</a>.<br>
             A zk-email proof may be generated to verify delivery of this message.
         </p>
     </div>

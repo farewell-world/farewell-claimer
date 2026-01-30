@@ -63,7 +63,7 @@ Modern Linux distributions (Ubuntu 23.04+, Debian 12+, Fedora 38+) use PEP 668 t
 
 ### From Farewell UI Export (Recommended)
 
-1. Claim a message on the [Farewell UI](https://www.iampedro.com/farewell)
+1. Claim a message on the [Farewell UI](https://farewell.world)
 2. Click "Export for Claimer" to download a JSON file
 3. Run the tool with the exported file:
 
@@ -152,7 +152,7 @@ farewell_proofs_YYYYMMDD_HHMMSS/
 
 ### Claiming Rewards
 
-1. Go to the [Farewell claim page](https://www.iampedro.com/farewell)
+1. Go to the [Farewell claim page](https://farewell.world)
 2. Navigate to the message you claimed
 3. For each recipient:
    - Upload the corresponding `.eml` file
