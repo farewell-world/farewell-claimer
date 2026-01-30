@@ -111,20 +111,28 @@ def clear_screen():
     os.system('cls' if os.name == 'nt' else 'clear')
 
 def print_banner():
-    """Print the Farewell banner."""
+    """Print the Farewell banner with logo."""
     banner = f"""
-{Fore.CYAN}╔══════════════════════════════════════════════════════════════════╗
-║                                                                  ║
-║  {Fore.MAGENTA}███████╗ █████╗ ██████╗ ███████╗██╗    ██╗███████╗██╗     ██╗   {Fore.CYAN}║
-║  {Fore.MAGENTA}██╔════╝██╔══██╗██╔══██╗██╔════╝██║    ██║██╔════╝██║     ██║   {Fore.CYAN}║
-║  {Fore.MAGENTA}█████╗  ███████║██████╔╝█████╗  ██║ █╗ ██║█████╗  ██║     ██║   {Fore.CYAN}║
-║  {Fore.MAGENTA}██╔══╝  ██╔══██║██╔══██╗██╔══╝  ██║███╗██║██╔══╝  ██║     ██║   {Fore.CYAN}║
-║  {Fore.MAGENTA}██║     ██║  ██║██║  ██║███████╗╚███╔███╔╝███████╗███████╗███████╗{Fore.CYAN}║
-║  {Fore.MAGENTA}╚═╝     ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝ ╚══╝╚══╝ ╚══════╝╚══════╝╚══════╝{Fore.CYAN}║
-║                                                                  ║
-║           {Fore.YELLOW}Claimer Helper - ZK-Email Proof Generator{Fore.CYAN}              ║
-║                                                                  ║
-╚══════════════════════════════════════════════════════════════════╝
+{Fore.CYAN}                        ╭──────╮
+                    ╭───╯      ╰───╮
+                ╭───╯      {Fore.WHITE}│{Fore.CYAN}       ╰───╮
+            ╭───╯          {Fore.WHITE}│{Fore.CYAN}           ╰───╮
+          ╭─╯            {Fore.WHITE}╭─┴─╮{Fore.CYAN}             ╰─╮
+        ╭─╯              {Fore.WHITE}│   │{Fore.CYAN}               ╰─╮
+       ╭╯                {Fore.WHITE}│   │{Fore.CYAN}                 ╰╮
+      ╭╯                 {Fore.WHITE}│   │{Fore.CYAN}                  ╰╮
+      │                  {Fore.WHITE}╰───╯{Fore.CYAN}                   │
+      │                                          │
+      │      {Fore.WHITE}F A R E W E L L{Fore.CYAN}                    │
+      │                                          │
+      ╰╮                                        ╭╯
+       ╰╮       {Fore.YELLOW}Claimer Helper{Fore.CYAN}                ╭╯
+        ╰─╮   {Fore.YELLOW}ZK-Email Proof Generator{Fore.CYAN}     ╭─╯
+          ╰─╮                              ╭─╯
+            ╰───╮                      ╭───╯
+                ╰───╮              ╭───╯
+                    ╰───╮      ╭───╯
+                        ╰──────╯
 {Style.RESET_ALL}"""
     print(banner)
 
