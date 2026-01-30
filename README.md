@@ -59,7 +59,19 @@ Modern Linux distributions (Ubuntu 23.04+, Debian 12+, Fedora 38+) use PEP 668 t
 
 ## Usage
 
-### Basic Usage
+### From Farewell UI Export (Recommended)
+
+1. Claim a message on the [Farewell UI](https://www.iampedro.com/farewell)
+2. Click "Export for Claimer" to download a JSON file
+3. Run the tool with the exported file:
+
+```bash
+python farewell_claimer.py message.json
+```
+
+### Interactive Mode
+
+If you don't have an export file, run without arguments:
 
 ```bash
 python farewell_claimer.py
@@ -70,6 +82,19 @@ The tool will guide you through:
 1. **SMTP Configuration** - Select your email provider and enter credentials
 2. **Message Information** - Enter recipient emails, content hash, and message
 3. **Send & Prove** - Emails are sent and proofs are generated automatically
+
+### JSON File Format
+
+The export file should contain:
+
+```json
+{
+  "recipients": ["alice@example.com", "bob@example.com"],
+  "contentHash": "0x1234567890abcdef...",
+  "message": "Your farewell message content...",
+  "subject": "Optional custom subject"
+}
+```
 
 ### Email Provider Setup
 

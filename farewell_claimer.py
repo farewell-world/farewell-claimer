@@ -9,13 +9,15 @@ A user-friendly tool to help Farewell message claimers:
 3. Generate zk-email proofs for the Farewell smart contract
 
 Requirements:
-    pip install colorama email-validator pyyaml
+    pip install colorama google-auth-oauthlib google-api-python-client
 
 Usage:
-    python farewell-claimer.py
+    python farewell_claimer.py                      # Interactive mode
+    python farewell_claimer.py message.json         # Load from file
+    python farewell_claimer.py -f message.json      # Load from file (explicit)
 
 Author: Farewell Protocol
-License: MIT
+License: GPL-3.0
 """
 
 import os
@@ -25,6 +27,7 @@ import smtplib
 import hashlib
 import time
 import base64
+import argparse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formatdate, make_msgid
@@ -611,8 +614,64 @@ def save_proof(proof: Dict, filename: str, output_dir: str = "proofs") -> str:
 
 # ============ Main Flow ============
 
+def load_message_from_file(filepath: str) -> Optional[Dict]:
+    """
+    Load message data from a JSON file exported from Farewell UI.
+
+    Expected JSON format:
+    {
+        "recipients": ["email1@example.com", "email2@example.com"],
+        "contentHash": "0x1234...",
+        "message": "The farewell message content...",
+        "subject": "Optional custom subject"
+    }
+    """
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        print_error(f"File not found: {filepath}")
+        return None
+    except json.JSONDecodeError as e:
+        print_error(f"Invalid JSON file: {e}")
+        return None
+
+    # Validate required fields
+    if 'recipients' not in data:
+        print_error("Missing 'recipients' field in JSON")
+        return None
+    if 'contentHash' not in data and 'content_hash' not in data:
+        print_error("Missing 'contentHash' field in JSON")
+        return None
+    if 'message' not in data:
+        print_error("Missing 'message' field in JSON")
+        return None
+
+    # Normalize field names (support both camelCase and snake_case)
+    recipients = data['recipients']
+    if isinstance(recipients, str):
+        recipients = [r.strip() for r in recipients.split(',') if r.strip()]
+
+    content_hash = data.get('contentHash') or data.get('content_hash', '')
+    if not content_hash.startswith('0x'):
+        content_hash = '0x' + content_hash
+
+    result = {
+        "recipients": recipients,
+        "content_hash": content_hash,
+        "message": data['message'],
+        "subject": data.get('subject', 'Farewell Message Delivery')
+    }
+
+    print_success(f"Loaded message data from: {filepath}")
+    print_info(f"  Recipients: {len(result['recipients'])}")
+    print_info(f"  Content hash: {result['content_hash'][:20]}...")
+
+    return result
+
+
 def get_message_info() -> Dict:
-    """Get Farewell message information from user."""
+    """Get Farewell message information from user (interactive mode)."""
     print_section("Message Information")
 
     print_info("Enter the information from the decrypted Farewell message:")
@@ -636,13 +695,23 @@ def get_message_info() -> Dict:
     return {
         "recipients": recipients,
         "content_hash": content_hash,
-        "message": "\n".join(message_content)
+        "message": "\n".join(message_content),
+        "subject": "Farewell Message Delivery"
     }
 
-def main_flow():
+def main_flow(message_file: Optional[str] = None):
     """Main application flow."""
     clear_screen()
     print_banner()
+
+    # Load message from file if provided
+    msg_info = None
+    if message_file:
+        print_section("Loading Message Data")
+        msg_info = load_message_from_file(message_file)
+        if msg_info is None:
+            return
+        print()
 
     print(f"""
 {Fore.WHITE}Welcome to the Farewell Claimer Helper!{Style.RESET_ALL}
@@ -672,8 +741,9 @@ This tool will help you:
             print_error("Could not connect to SMTP server. Please check your settings.")
             return
 
-    # Step 2: Get Message Information
-    msg_info = get_message_info()
+    # Step 2: Get Message Information (if not loaded from file)
+    if msg_info is None:
+        msg_info = get_message_info()
 
     if not msg_info['recipients']:
         print_error("No recipients specified!")
@@ -704,7 +774,7 @@ This tool will help you:
         print(f"\n{Fore.CYAN}[{i}/{len(msg_info['recipients'])}]{Style.RESET_ALL} Processing: {recipient}")
 
         # Create email
-        subject = "Farewell Message Delivery"
+        subject = msg_info.get('subject', 'Farewell Message Delivery')
         email_msg = create_farewell_email(
             sender_email=smtp_config.email,
             sender_name=smtp_config.display_name or smtp_config.email,
@@ -786,10 +856,49 @@ submit proofs if the UI upload doesn't work.
 {Fore.GREEN}Thank you for using Farewell!{Style.RESET_ALL}
 """)
 
+def parse_args():
+    """Parse command-line arguments."""
+    parser = argparse.ArgumentParser(
+        description='Farewell Claimer - Send emails and generate zk-email proofs',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  %(prog)s                       Interactive mode
+  %(prog)s message.json          Load message data from JSON file
+  %(prog)s -f message.json       Same as above (explicit flag)
+
+JSON file format:
+  {
+    "recipients": ["alice@example.com", "bob@example.com"],
+    "contentHash": "0x1234...",
+    "message": "Your farewell message content..."
+  }
+
+Export this JSON from the Farewell UI after claiming a message.
+"""
+    )
+    parser.add_argument(
+        'file',
+        nargs='?',
+        help='JSON file with message data (exported from Farewell UI)'
+    )
+    parser.add_argument(
+        '-f', '--file',
+        dest='file_flag',
+        help='JSON file with message data (alternative to positional argument)'
+    )
+    return parser.parse_args()
+
+
 def main():
     """Entry point."""
+    args = parse_args()
+
+    # Determine message file (positional arg takes precedence)
+    message_file = args.file or args.file_flag
+
     try:
-        main_flow()
+        main_flow(message_file)
     except KeyboardInterrupt:
         print(f"\n\n{Fore.YELLOW}Interrupted by user.{Style.RESET_ALL}")
         sys.exit(0)
