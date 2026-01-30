@@ -1,4 +1,5 @@
 # Farewell Claimer
+<p align="center"> <img src="assets/farewell-logo.png" alt="Farewell Logo" width="600"/> </p>
 
 A command-line tool for Farewell message claimers to send emails to recipients and generate zk-email proofs for claiming rewards on the Farewell smart contract.
 
