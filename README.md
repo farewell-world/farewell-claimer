@@ -25,19 +25,35 @@ This tool automates steps 1 and 2, making it easy to deliver farewell messages a
 ### Requirements
 
 - Python 3.8+
-- pip
 
-### Install dependencies
+### Quick Start (Recommended)
+
+Create a virtual environment and install dependencies:
 
 ```bash
+# Create virtual environment
+python3 -m venv .venv
+
+# Activate it
+source .venv/bin/activate  # Linux/macOS
+# or: .venv\Scripts\activate  # Windows
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-Or install manually:
+### Alternative: Install with pipx
+
+If you just want to run the tool without setting up a dev environment:
 
 ```bash
-pip install colorama
+pipx install colorama
+python3 farewell_claimer.py
 ```
+
+### Why a virtual environment?
+
+Modern Linux distributions (Ubuntu 23.04+, Debian 12+, Fedora 38+) use PEP 668 to prevent system-wide pip installations, which protects your system Python. Using a virtual environment is the recommended approach.
 
 ## Usage
 
@@ -93,11 +109,22 @@ farewell_proofs_YYYYMMDD_HHMMSS/
 
 ## Development
 
+### Setup
+
+```bash
+# Create and activate virtual environment
+python3 -m venv .venv
+source .venv/bin/activate  # Linux/macOS
+
+# Install dev dependencies
+pip install -r requirements-dev.txt
+```
+
 ### Running Tests
 
 ```bash
-# Install dev dependencies
-pip install -r requirements-dev.txt
+# Make sure venv is activated
+source .venv/bin/activate
 
 # Run tests
 pytest
