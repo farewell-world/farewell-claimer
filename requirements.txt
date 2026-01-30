@@ -1,1 +1,5 @@
 colorama>=0.4.6
+
+# Gmail OAuth 2.0 support (optional but recommended)
+google-auth-oauthlib>=1.0.0
+google-api-python-client>=2.100.0

@@ -24,13 +24,14 @@ import json
 import smtplib
 import hashlib
 import time
+import base64
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.utils import formatdate, make_msgid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, List, Tuple
-from dataclasses import dataclass
+from typing import Optional, Dict, List, Tuple, Union
+from dataclasses import dataclass, field
 
 try:
     from colorama import init, Fore, Back, Style
@@ -38,6 +39,18 @@ try:
 except ImportError:
     print("Please install colorama: pip install colorama")
     sys.exit(1)
+
+# Optional: Google OAuth support
+GOOGLE_OAUTH_AVAILABLE = False
+try:
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+    GOOGLE_OAUTH_AVAILABLE = True
+except ImportError:
+    pass  # OAuth is optional, will use password-based auth
 
 # ============ Configuration ============
 
@@ -51,15 +64,32 @@ class SMTPConfig:
     email: str
     password: str
     display_name: Optional[str] = None
+    use_oauth: bool = False
+    oauth_credentials: Optional[any] = None
+
+
+# Gmail OAuth scopes - only send permission needed
+GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.send']
+CREDENTIALS_FILE = 'credentials.json'
+TOKEN_FILE = 'token.json'
 
 # Pre-configured SMTP settings for popular providers
 SMTP_PRESETS: Dict[str, Dict] = {
+    "gmail_oauth": {
+        "host": "gmail-api",
+        "port": 0,
+        "use_tls": False,
+        "use_ssl": False,
+        "use_oauth": True,
+        "note": "Uses OAuth 2.0 - no password required! Opens browser for authorization.",
+        "help_url": "https://console.cloud.google.com/"
+    },
     "gmail": {
         "host": "smtp.gmail.com",
         "port": 587,
         "use_tls": True,
         "use_ssl": False,
-        "note": "Enable 'Less secure app access' or use an App Password",
+        "note": "Requires an App Password (enable 2FA first)",
         "help_url": "https://support.google.com/accounts/answer/185833"
     },
     "outlook": {
@@ -193,30 +223,171 @@ def confirm(msg: str, default: bool = True) -> bool:
         return default
     return result in ('y', 'yes')
 
+# ============ Gmail OAuth ============
+
+def setup_gmail_oauth() -> Optional[SMTPConfig]:
+    """Setup Gmail with OAuth 2.0 authentication."""
+    if not GOOGLE_OAUTH_AVAILABLE:
+        print_error("Google OAuth libraries not installed!")
+        print_info("Install with: pip install google-auth-oauthlib google-api-python-client")
+        return None
+
+    # Check for credentials.json
+    if not Path(CREDENTIALS_FILE).exists():
+        print_error(f"'{CREDENTIALS_FILE}' not found!")
+        print_info("To set up Gmail OAuth:")
+        print_info("  1. Go to https://console.cloud.google.com/")
+        print_info("  2. Create a project (or select existing)")
+        print_info("  3. Enable the Gmail API")
+        print_info("  4. Create OAuth 2.0 credentials (Desktop app)")
+        print_info(f"  5. Download and save as '{CREDENTIALS_FILE}' in this directory")
+        return None
+
+    creds = None
+
+    # Load existing token if available
+    if Path(TOKEN_FILE).exists():
+        try:
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, GMAIL_SCOPES)
+            print_info("Found existing OAuth token.")
+        except Exception:
+            pass
+
+    # If no valid credentials, do the OAuth flow
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            print_info("Refreshing expired token...")
+            try:
+                creds.refresh(Request())
+            except Exception as e:
+                print_warning(f"Could not refresh token: {e}")
+                creds = None
+
+        if not creds:
+            print_info("Opening browser for Google authorization...")
+            print_info("Please sign in and grant permission to send emails.")
+            print()
+
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, GMAIL_SCOPES)
+                creds = flow.run_local_server(port=0)
+            except Exception as e:
+                print_error(f"OAuth flow failed: {e}")
+                return None
+
+        # Save the token for future use
+        try:
+            with open(TOKEN_FILE, 'w') as token:
+                token.write(creds.to_json())
+            print_success(f"Token saved to '{TOKEN_FILE}' for future use.")
+        except Exception as e:
+            print_warning(f"Could not save token: {e}")
+
+    # Get the user's email address
+    try:
+        service = build('gmail', 'v1', credentials=creds)
+        profile = service.users().getProfile(userId='me').execute()
+        email = profile['emailAddress']
+        print_success(f"Authenticated as: {email}")
+    except Exception as e:
+        print_error(f"Could not get user profile: {e}")
+        return None
+
+    display_name = prompt("Display name (optional)", email.split('@')[0])
+
+    return SMTPConfig(
+        host="gmail-api",
+        port=0,
+        use_tls=False,
+        use_ssl=False,
+        email=email,
+        password="",
+        display_name=display_name,
+        use_oauth=True,
+        oauth_credentials=creds
+    )
+
+
+def send_email_gmail_api(config: SMTPConfig, email_msg: MIMEMultipart, recipient: str) -> Tuple[bool, str]:
+    """Send email using Gmail API (OAuth)."""
+    if not GOOGLE_OAUTH_AVAILABLE:
+        return False, "Google OAuth libraries not installed"
+
+    try:
+        service = build('gmail', 'v1', credentials=config.oauth_credentials)
+
+        # Get raw message
+        raw_msg = email_msg.as_string()
+
+        # Encode for Gmail API
+        encoded_message = base64.urlsafe_b64encode(raw_msg.encode('utf-8')).decode('utf-8')
+
+        # Send via Gmail API
+        message = {'raw': encoded_message}
+        service.users().messages().send(userId='me', body=message).execute()
+
+        return True, raw_msg
+    except HttpError as e:
+        return False, f"Gmail API error: {e}"
+    except Exception as e:
+        return False, str(e)
+
+
+def test_gmail_oauth_connection(config: SMTPConfig) -> bool:
+    """Test Gmail OAuth connection by checking profile."""
+    print_info("Testing Gmail OAuth connection...")
+    try:
+        service = build('gmail', 'v1', credentials=config.oauth_credentials)
+        profile = service.users().getProfile(userId='me').execute()
+        print_success(f"Gmail OAuth connection successful! ({profile['emailAddress']})")
+        return True
+    except Exception as e:
+        print_error(f"Gmail OAuth test failed: {e}")
+        return False
+
+
 # ============ SMTP Configuration ============
 
-def setup_smtp() -> SMTPConfig:
+def setup_smtp() -> Optional[SMTPConfig]:
     """Interactive SMTP setup."""
     print_section("SMTP Configuration")
 
-    # List providers
-    providers = list(SMTP_PRESETS.keys()) + ["manual"]
-    provider_names = [
-        f"{Fore.GREEN}Gmail{Style.RESET_ALL} (smtp.gmail.com)",
+    # Build provider list dynamically
+    providers = []
+    provider_names = []
+
+    # Gmail OAuth (recommended if available)
+    if GOOGLE_OAUTH_AVAILABLE and Path(CREDENTIALS_FILE).exists():
+        providers.append("gmail_oauth")
+        provider_names.append(f"{Fore.GREEN}Gmail (OAuth 2.0){Style.RESET_ALL} - Recommended, no password needed!")
+    elif GOOGLE_OAUTH_AVAILABLE:
+        providers.append("gmail_oauth")
+        provider_names.append(f"{Fore.GREEN}Gmail (OAuth 2.0){Style.RESET_ALL} - Requires credentials.json setup")
+
+    # Standard providers
+    providers.append("gmail")
+    provider_names.append(f"{Fore.GREEN}Gmail (App Password){Style.RESET_ALL} - smtp.gmail.com")
+
+    providers.extend(["outlook", "yahoo", "icloud", "zoho", "protonmail", "manual"])
+    provider_names.extend([
         f"{Fore.BLUE}Outlook/Hotmail{Style.RESET_ALL} (smtp-mail.outlook.com)",
         f"{Fore.MAGENTA}Yahoo{Style.RESET_ALL} (smtp.mail.yahoo.com)",
         f"{Fore.CYAN}iCloud{Style.RESET_ALL} (smtp.mail.me.com)",
         f"{Fore.YELLOW}Zoho{Style.RESET_ALL} (smtp.zoho.com)",
         f"{Fore.WHITE}ProtonMail{Style.RESET_ALL} (requires Bridge)",
         f"{Fore.RED}Manual Configuration{Style.RESET_ALL} (custom SMTP server)"
-    ]
+    ])
 
     choice = select_option(provider_names, "Select your email provider:")
+    provider = providers[choice]
 
-    if choice == len(providers) - 1:  # Manual
+    # Handle special cases
+    if provider == "gmail_oauth":
+        return setup_gmail_oauth()
+
+    if provider == "manual":
         return setup_smtp_manual()
 
-    provider = providers[choice]
     preset = SMTP_PRESETS[provider]
 
     print()
@@ -266,6 +437,10 @@ def setup_smtp_manual() -> SMTPConfig:
 
 def test_smtp_connection(config: SMTPConfig) -> bool:
     """Test SMTP connection."""
+    # Use Gmail OAuth test if applicable
+    if config.use_oauth:
+        return test_gmail_oauth_connection(config)
+
     print_info("Testing SMTP connection...")
     try:
         if config.use_ssl:
@@ -358,6 +533,10 @@ A zk-email proof may be generated to verify delivery of this message.
 
 def send_email(config: SMTPConfig, email_msg: MIMEMultipart, recipient: str) -> Tuple[bool, str]:
     """Send an email and return (success, raw_message)."""
+    # Use Gmail API if OAuth is configured
+    if config.use_oauth:
+        return send_email_gmail_api(config, email_msg, recipient)
+
     try:
         if config.use_ssl:
             server = smtplib.SMTP_SSL(config.host, config.port, timeout=30)

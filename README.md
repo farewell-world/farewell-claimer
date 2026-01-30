@@ -15,6 +15,7 @@ This tool automates steps 1 and 2, making it easy to deliver farewell messages a
 ## Features
 
 - **Interactive CLI** with colorful, user-friendly interface
+- **Gmail OAuth 2.0** - No password needed! Just authorize via browser (recommended)
 - **Multiple email providers** - Gmail, Outlook, Yahoo, iCloud, Zoho, or custom SMTP
 - **Batch sending** - Send to multiple recipients in one session
 - **Automatic .eml export** - Saves sent emails for proof generation
@@ -72,7 +73,30 @@ The tool will guide you through:
 
 ### Email Provider Setup
 
-#### Gmail
+#### Gmail with OAuth 2.0 (Recommended)
+
+The easiest and most secure option - no password required!
+
+**One-time setup:**
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project (or select existing)
+3. Enable the **Gmail API**:
+   - Go to "APIs & Services" → "Library"
+   - Search for "Gmail API" and enable it
+4. Create OAuth credentials:
+   - Go to "APIs & Services" → "Credentials"
+   - Click "Create Credentials" → "OAuth client ID"
+   - Select "Desktop app" as application type
+   - Download the JSON file
+5. Save the file as `credentials.json` in the farewell-claimer directory
+
+**Usage:**
+- Run the tool and select "Gmail (OAuth 2.0)"
+- A browser window opens for you to sign in
+- Grant permission to send emails
+- Done! Token is saved for future use
+
+#### Gmail with App Password (Alternative)
 - Enable 2-Factor Authentication
 - Generate an [App Password](https://support.google.com/accounts/answer/185833)
 - Use the App Password instead of your regular password
@@ -157,8 +181,8 @@ farewell-claimer/
 
 ## Security Considerations
 
-- **Credentials**: Never commit your email credentials. The tool prompts for them each time.
-- **App Passwords**: Always use app-specific passwords instead of your main account password.
+- **OAuth Credentials**: Never commit `credentials.json` or `token.json` - they are in `.gitignore`
+- **App Passwords**: If using SMTP, use app-specific passwords instead of your main account password
 - **Proof Files**: The generated `.eml` and `.json` files contain sensitive information. Keep them secure.
 
 ## How It Works
@@ -201,7 +225,7 @@ The generated proofs are designed to work with zk-email circuits that verify:
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+GPL-3.0 License - see [LICENSE](LICENSE) for details.
 
 ## Related Projects
 
