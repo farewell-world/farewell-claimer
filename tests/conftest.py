@@ -95,7 +95,7 @@ This is a farewell message.
 Farewell-Hash: 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef
 ---
 
-This message was sent via Farewell Protocol (https://www.iampedro.com/farewell)
+This message was sent via Farewell Protocol (https://farewell.world)
 --boundary123--
 """
 
