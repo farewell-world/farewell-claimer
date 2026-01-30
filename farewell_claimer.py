@@ -68,8 +68,11 @@ class SMTPConfig:
     oauth_credentials: Optional[any] = None
 
 
-# Gmail OAuth scopes - only send permission needed
-GMAIL_SCOPES = ['https://www.googleapis.com/auth/gmail.send']
+# Gmail OAuth scopes - send permission + metadata for profile access
+GMAIL_SCOPES = [
+    'https://www.googleapis.com/auth/gmail.send',
+    'https://www.googleapis.com/auth/gmail.metadata'
+]
 CREDENTIALS_FILE = 'credentials.json'
 TOKEN_FILE = 'token.json'
 
@@ -656,12 +659,16 @@ This tool will help you:
     # Step 1: SMTP Configuration
     smtp_config = setup_smtp()
 
+    if smtp_config is None:
+        print_error("SMTP configuration failed.")
+        return
+
     if not test_smtp_connection(smtp_config):
         if not confirm("Connection failed. Try again?"):
             print_error("Aborting.")
             return
         smtp_config = setup_smtp()
-        if not test_smtp_connection(smtp_config):
+        if smtp_config is None or not test_smtp_connection(smtp_config):
             print_error("Could not connect to SMTP server. Please check your settings.")
             return
 
