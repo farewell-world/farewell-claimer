@@ -21,6 +21,7 @@ This tool automates steps 1 and 2, making it easy to deliver farewell messages a
 - **Multiple email providers** - Gmail, Outlook, Yahoo, iCloud, Zoho, or custom SMTP
 - **Batch sending** - Send to multiple recipients in one session
 - **Automatic .eml export** - Saves sent emails for proof generation
+- **Claim package decryption** - Decrypts AES-128-GCM encrypted messages from the Farewell UI
 - **Proof generation** - Creates zk-email proof structures for the blockchain
 - **Connection testing** - Validates SMTP credentials before sending
 
@@ -29,6 +30,7 @@ This tool automates steps 1 and 2, making it easy to deliver farewell messages a
 ### Requirements
 
 - Python 3.8+
+- `cryptography` package (for decrypting claim packages)
 
 ### Quick Start (Recommended)
 
@@ -64,12 +66,15 @@ Modern Linux distributions (Ubuntu 23.04+, Debian 12+, Fedora 38+) use PEP 668 t
 ### From Farewell UI Export (Recommended)
 
 1. Claim a message on the [Farewell UI](https://farewell.world)
-2. Click "Export for Claimer" to download a JSON file
+2. Download the claim package JSON
 3. Run the tool with the exported file:
 
 ```bash
-python farewell_claimer.py message.json
+python farewell_claimer.py claim-package.json
 ```
+
+4. When prompted, enter the off-chain secret (`s'`) that the message recipient should have received from the sender
+5. The tool decrypts the message and guides you through sending it
 
 ### Interactive Mode
 
@@ -85,9 +90,24 @@ The tool will guide you through:
 2. **Message Information** - Enter recipient emails, content hash, and message
 3. **Send & Prove** - Emails are sent and proofs are generated automatically
 
-### JSON File Format
+### JSON File Formats
 
-The export file should contain:
+The tool supports two input formats:
+
+**Claim package** (from Farewell UI — contains encrypted message, requires `s'` to decrypt):
+
+```json
+{
+  "type": "farewell-claim-package",
+  "recipients": ["alice@example.com"],
+  "skShare": "0x...",
+  "encryptedPayload": "0x...",
+  "contentHash": "0x1234...",
+  "subject": "Farewell Message Delivery"
+}
+```
+
+**Direct format** (pre-decrypted message, for manual use):
 
 ```json
 {
@@ -192,9 +212,10 @@ pytest tests/test_email.py -v
 
 ```
 farewell-claimer/
-├── farewell_claimer.py      # Main CLI application
+├── farewell_claimer.py      # Main CLI application (single file)
+├── docs/
+│   └── claimer-guide.md     # Step-by-step user guide
 ├── tests/
-│   ├── __init__.py
 │   ├── conftest.py          # Test fixtures
 │   ├── test_smtp.py         # SMTP configuration tests
 │   ├── test_email.py        # Email creation/sending tests
@@ -214,10 +235,21 @@ farewell-claimer/
 
 ## How It Works
 
+### Claim Package Decryption
+
+When loading a claim package from the Farewell UI, the tool:
+
+1. Detects the `"type": "farewell-claim-package"` format
+2. Prompts for `s'` (the off-chain secret the recipient should have)
+3. Reconstructs the AES key: `sk = skShare XOR s'`
+4. Decrypts the AES-128-GCM encrypted payload to recover the original message
+
+This is the [key sharing scheme](https://github.com/pdroalves/farewell-core#key-sharing-scheme) used by Farewell — the message can only be decrypted by combining the on-chain key share with the off-chain secret.
+
 ### Email Sending
 
 1. Connects to your SMTP server with TLS encryption
-2. Creates a properly formatted email with the Farewell-Hash embedded
+2. Creates a properly formatted email with the `Farewell-Hash` embedded in the body
 3. Sends the email and captures the raw message for proof generation
 
 ### Proof Generation
@@ -231,7 +263,7 @@ farewell-claimer/
 The generated proofs are designed to work with zk-email circuits that verify:
 - The email was signed with a valid DKIM signature
 - The recipient (TO field) matches the committed hash
-- The email body contains the correct Farewell-Hash
+- The email body contains the correct `Farewell-Hash`
 
 ## Troubleshooting
 
@@ -249,6 +281,10 @@ The generated proofs are designed to work with zk-email circuits that verify:
 - Check the recipient's spam folder
 - Verify the recipient email address is correct
 - Some email providers have rate limits
+
+## Disclaimer
+
+This is a personal project by the author, who is employed by [Zama](https://www.zama.ai/). Farewell is **not** an official Zama product, and Zama bears no responsibility for its development, maintenance, or use. All views and code are the author's own.
 
 ## License
 
