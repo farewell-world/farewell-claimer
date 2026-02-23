@@ -53,7 +53,7 @@ python farewell_claimer.py
 
 - **Language**: Python 3.8+
 - **Email**: SMTP/STARTTLS, Gmail OAuth 2.0 via API
-- **Dependencies**: colorama, google-auth-oauthlib, google-api-python-client
+- **Dependencies**: colorama, google-auth-oauthlib, google-api-python-client, cryptography
 - **Testing**: pytest
 
 ## Application Architecture
@@ -114,7 +114,19 @@ This hash is extracted by the zk-email circuit to verify the message content mat
    python farewell_claimer.py message.json
    ```
 
-   JSON format:
+   **Claim package format** (from Farewell UI Claim tab — requires s' to decrypt):
+   ```json
+   {
+     "type": "farewell-claim-package",
+     "recipients": ["alice@example.com"],
+     "skShare": "0x...",
+     "encryptedPayload": "0x...",
+     "contentHash": "0x...",
+     "subject": "Farewell Message Delivery"
+   }
+   ```
+
+   **Direct format** (pre-decrypted):
    ```json
    {
      "recipients": ["alice@example.com", "bob@example.com"],
@@ -228,6 +240,16 @@ def generate_proof_structure(
 - All SMTP operations wrapped in try/except
 - User-friendly error messages with colorama formatting
 - Connection testing before sending
+
+## Cross-Project Compatibility: Farewell UI
+
+**IMPORTANT**: The `load_message_from_file()` and `_load_claim_package()` functions parse the JSON exported from the Farewell UI's Claim tab (`ClaimPackageJson` in `Farewell.tsx`, located at `../farewell/packages/site/components/Farewell.tsx`). When modifying the claim package parsing:
+
+1. The claim package is detected by `type: "farewell-claim-package"`
+2. Required fields: `recipients` (array), `skShare` (hex), `encryptedPayload` (hex), `contentHash` (hex)
+3. AES-128-GCM packed format: `0x` + IV(12 bytes) + ciphertext+GCM-tag; key = `skShare XOR s'` as 16-byte big-endian
+4. If you change field names or the decryption logic, update `Farewell.tsx` accordingly
+5. The old direct format (`recipients`, `contentHash`, `message`) must continue to work
 
 ## Security Considerations
 
