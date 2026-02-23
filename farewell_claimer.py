@@ -9,7 +9,7 @@ A user-friendly tool to help Farewell message claimers:
 3. Generate zk-email proofs for the Farewell smart contract
 
 Requirements:
-    pip install colorama google-auth-oauthlib google-api-python-client
+    pip install colorama google-auth-oauthlib google-api-python-client cryptography
 
 Usage:
     python farewell_claimer.py                      # Interactive mode
@@ -54,6 +54,14 @@ try:
     GOOGLE_OAUTH_AVAILABLE = True
 except ImportError:
     pass  # OAuth is optional, will use password-based auth
+
+# Optional: AES-GCM decryption for claim packages
+AES_AVAILABLE = False
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    AES_AVAILABLE = True
+except ImportError:
+    pass  # AES decryption is optional, only needed for claim packages
 
 # ============ Configuration ============
 
@@ -612,15 +620,125 @@ def save_proof(proof: Dict, filename: str, output_dir: str = "proofs") -> str:
         json.dump(proof, f, indent=2)
     return str(filepath)
 
+# ============ AES-GCM Decryption (for claim packages) ============
+
+def decrypt_aes_gcm_packed(encrypted_hex: str, sk_share_hex: str, s_prime_hex: str) -> Optional[str]:
+    """
+    Decrypt AES-128-GCM packed payload using skShare XOR s'.
+
+    Packed format (from lib/aes.ts): 0x + IV(12 bytes) + ciphertext(with GCM tag)
+    Key derivation: sk = skShare XOR s' (128-bit), converted to 16-byte big-endian.
+    """
+    if not AES_AVAILABLE:
+        print_error("AES decryption requires the 'cryptography' package.")
+        print_info("Install it with: pip install cryptography")
+        return None
+
+    # Strip 0x prefix
+    encrypted = encrypted_hex[2:] if encrypted_hex.startswith('0x') else encrypted_hex
+    sk_share = sk_share_hex[2:] if sk_share_hex.startswith('0x') else sk_share_hex
+    s_prime = s_prime_hex[2:] if s_prime_hex.startswith('0x') else s_prime_hex
+
+    # Compute sk = skShare XOR s' (as 128-bit integers)
+    sk_int = int(sk_share, 16) ^ int(s_prime, 16)
+
+    # Convert to 16-byte key (big-endian, matching lib/aes.ts bigintToKey16)
+    key = sk_int.to_bytes(16, byteorder='big')
+
+    # Parse packed payload: first 12 bytes = IV, rest = ciphertext + GCM tag
+    data = bytes.fromhex(encrypted)
+    if len(data) < 28:  # 12 (IV) + 16 (min GCM tag)
+        print_error("Encrypted payload too short (missing IV or GCM tag)")
+        return None
+
+    iv = data[:12]
+    ciphertext_and_tag = data[12:]
+
+    try:
+        aesgcm = AESGCM(key)
+        plaintext = aesgcm.decrypt(iv, ciphertext_and_tag, None)
+        return plaintext.decode('utf-8')
+    except Exception as e:
+        print_error(f"AES-GCM decryption failed: {e}")
+        print_info("This usually means the s' value is incorrect.")
+        return None
+
+
+def _load_claim_package(data: Dict, filepath: str) -> Optional[Dict]:
+    """
+    Handle the claim package format from Farewell UI (type: farewell-claim-package).
+
+    This format contains an AES-encrypted message that needs s' (the off-chain
+    secret shared with the recipient) to decrypt.
+    """
+    # Validate required fields
+    required = ['recipients', 'skShare', 'encryptedPayload', 'contentHash']
+    for field in required:
+        if field not in data:
+            print_error(f"Claim package missing '{field}' field")
+            return None
+
+    recipients = data['recipients']
+    if isinstance(recipients, str):
+        recipients = [r.strip() for r in recipients.split(',') if r.strip()]
+
+    content_hash = data['contentHash']
+    if not content_hash.startswith('0x'):
+        content_hash = '0x' + content_hash
+
+    # Need s' to decrypt the message
+    print_section("AES Decryption")
+    print_info("This claim package contains an encrypted message.")
+    print_info("You need the off-chain secret (s') to decrypt it.")
+    print_info("The recipient should have received s' from the message sender.")
+    print()
+
+    s_prime = prompt("Enter s' (hex, starts with 0x)")
+    if not s_prime.startswith('0x'):
+        s_prime = '0x' + s_prime
+
+    message = decrypt_aes_gcm_packed(data['encryptedPayload'], data['skShare'], s_prime)
+    if message is None:
+        return None
+
+    print_success("Message decrypted successfully!")
+    print()
+
+    result = {
+        "recipients": recipients,
+        "content_hash": content_hash,
+        "message": message,
+        "subject": data.get('subject', 'Farewell Message Delivery')
+    }
+
+    print_success(f"Loaded claim package from: {filepath}")
+    print_info(f"  Recipients: {len(result['recipients'])}")
+    print_info(f"  Content hash: {result['content_hash'][:20]}...")
+
+    return result
+
+
 # ============ Main Flow ============
 
 def load_message_from_file(filepath: str) -> Optional[Dict]:
     """
     Load message data from a JSON file exported from Farewell UI.
 
-    Expected JSON format:
+    Supports two formats:
+
+    1. Claim package (from Claim tab - requires s' to decrypt):
     {
-        "recipients": ["email1@example.com", "email2@example.com"],
+        "type": "farewell-claim-package",
+        "recipients": ["email@example.com"],
+        "skShare": "0x...",
+        "encryptedPayload": "0x...",
+        "contentHash": "0x...",
+        "subject": "..."
+    }
+
+    2. Direct format (pre-decrypted):
+    {
+        "recipients": ["email1@example.com"],
         "contentHash": "0x1234...",
         "message": "The farewell message content...",
         "subject": "Optional custom subject"
@@ -636,7 +754,11 @@ def load_message_from_file(filepath: str) -> Optional[Dict]:
         print_error(f"Invalid JSON file: {e}")
         return None
 
-    # Validate required fields
+    # Detect claim package format (exported from Farewell UI Claim tab)
+    if data.get('type') == 'farewell-claim-package':
+        return _load_claim_package(data, filepath)
+
+    # Validate required fields (legacy/direct format)
     if 'recipients' not in data:
         print_error("Missing 'recipients' field in JSON")
         return None
@@ -867,14 +989,25 @@ Examples:
   %(prog)s message.json          Load message data from JSON file
   %(prog)s -f message.json       Same as above (explicit flag)
 
-JSON file format:
+Supports two JSON formats:
+
+  Claim package (from Farewell UI Claim tab, requires s' to decrypt):
   {
-    "recipients": ["alice@example.com", "bob@example.com"],
+    "type": "farewell-claim-package",
+    "recipients": ["alice@example.com"],
+    "skShare": "0x...",
+    "encryptedPayload": "0x...",
+    "contentHash": "0x..."
+  }
+
+  Direct format (pre-decrypted message):
+  {
+    "recipients": ["alice@example.com"],
     "contentHash": "0x1234...",
     "message": "Your farewell message content..."
   }
 
-Export this JSON from the Farewell UI after claiming a message.
+Export the claim package JSON from the Farewell UI after claiming a message.
 """
     )
     parser.add_argument(
