@@ -5,15 +5,24 @@ This guide explains how to claim rewards from Farewell messages by proving email
 ## Overview
 
 When someone passes away and their Farewell messages are released, claimers can:
-1. Claim the message on the Farewell UI
-2. Decrypt the recipient email and message content
-3. Send the message to the recipient via email
-4. Prove delivery using zk-email
-5. Claim any attached ETH reward
+1. Claim the message and download a claim package from the Farewell UI
+2. Use this tool to decrypt the message (using the off-chain secret `s'`) and send it to the recipient
+3. Prove delivery using zk-email
+4. Claim any attached ETH reward
+
+```
+ Farewell UI                    farewell-claimer                 Farewell UI
+ ───────────                    ────────────────                 ───────────
+ Mark deceased                  Load claim package JSON          Upload proof JSON
+ Claim & retrieve         ───>  Enter s' to decrypt        ───> Submit proofs on-chain
+ Download claim package         Send email to recipient          Claim reward
+                                Generate zk-email proof
+```
 
 ## Prerequisites
 
 - A claimed Farewell message (you must have called `claim()` on the contract)
+- The off-chain secret `s'` (the recipient should have received this from the message sender)
 - Access to an email account (Gmail recommended with OAuth 2.0)
 - Python 3.8+ installed
 - The [farewell-claimer](https://github.com/pdroalves/farewell-claimer) tool
@@ -34,30 +43,31 @@ source .venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
 ```
 
-## Step 2: Claim and Decrypt the Message
+## Step 2: Claim & Retrieve on the Farewell UI
 
 1. Go to the [Farewell UI](https://farewell.world)
 2. Navigate to the **Claim** tab
 3. Enter the deceased user's address and message index
 4. Click **Mark Deceased** (if not already done)
-5. Click **Claim Message**
-6. Click **Retrieve & Decrypt**
-7. You'll see the decrypted recipient email, message content, and sk share
+5. Click **Claim & Retrieve** — this calls `claim()` then `retrieve()` on the contract
+6. You'll see the retrieved recipient email and sk share (the on-chain half of the decryption key)
 
-## Step 3: Export Message Data
+## Step 3: Download the Claim Package
 
-After decrypting, you'll see an **"Export for Claimer Tool"** button. Click it to download a JSON file containing:
+After claiming, click **Download Claim Package** to get a JSON file. This file contains:
 
 ```json
 {
+  "type": "farewell-claim-package",
   "recipients": ["recipient@example.com"],
-  "contentHash": "0x1234...",
-  "message": "The farewell message content...",
-  "publicMessage": "Optional public note",
-  "skShare": "12345...",
+  "skShare": "0x...",
+  "encryptedPayload": "0x...",
+  "contentHash": "0x...",
   "subject": "Farewell Message Delivery"
 }
 ```
+
+The message is still encrypted — the claim package contains the on-chain key share (`skShare`) but you need the off-chain secret (`s'`) to decrypt it.
 
 ## Step 4: Set Up Gmail OAuth (Recommended)
 
@@ -66,34 +76,33 @@ For the easiest experience, set up Gmail OAuth 2.0:
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Create a new project or select an existing one
 3. Enable the **Gmail API**:
-   - Navigate to "APIs & Services" → "Library"
+   - Navigate to "APIs & Services" > "Library"
    - Search for "Gmail API" and enable it
 4. Create OAuth credentials:
-   - Go to "APIs & Services" → "Credentials"
-   - Click "Create Credentials" → "OAuth client ID"
+   - Go to "APIs & Services" > "Credentials"
+   - Click "Create Credentials" > "OAuth client ID"
    - Select "Desktop app" as application type
    - Download the JSON file
 5. Save the file as `credentials.json` in the farewell-claimer directory
 
 ## Step 5: Send the Email
 
-Run the claimer tool with your exported JSON file:
+Run the claimer tool with the downloaded claim package:
 
 ```bash
-python farewell_claimer.py farewell-message-0.json
+python farewell_claimer.py farewell-claim-*.json
 ```
 
 The tool will:
-1. Ask you to select Gmail (OAuth 2.0)
-2. Open a browser for you to authorize (first time only)
-3. Show a summary of the message
-4. Send the email to the recipient
-5. Save the sent email as a `.eml` file
-6. Generate a proof structure
+1. Detect the claim package format
+2. **Prompt you for `s'`** (the off-chain secret the recipient received from the sender)
+3. Decrypt the message using `sk = skShare XOR s'`
+4. Ask you to select an email provider (Gmail OAuth recommended)
+5. Show a summary of the decrypted message
+6. Send the email with the `Farewell-Hash` embedded
+7. Save the sent email as `.eml` and generate a proof structure
 
 ### Output Files
-
-After running, you'll find:
 
 ```
 farewell_proofs_YYYYMMDD_HHMMSS/
@@ -103,13 +112,11 @@ farewell_proofs_YYYYMMDD_HHMMSS/
 
 ## Step 6: Prove Delivery
 
-1. Return to the Farewell UI
-2. In the **Delivery Proof** section, you'll see the recipients
-3. For each recipient:
-   - Click **Upload .eml**
-   - Select the corresponding `.eml` file
-   - Click **Prove Delivery**
-4. The proof is verified on-chain
+1. Return to the [Farewell UI](https://farewell.world)
+2. In the **Submit Proof** section (Step 3 of the Claim tab):
+   - Upload the proof JSON generated by farewell-claimer
+   - Click **Submit Delivery Proofs**
+3. The proofs are verified on-chain
 
 ## Step 7: Claim the Reward
 
@@ -127,10 +134,7 @@ If you don't have an export file, you can run the claimer in interactive mode:
 python farewell_claimer.py
 ```
 
-You'll be prompted to enter:
-- Recipient email(s)
-- Content hash
-- Message content
+You'll be prompted to manually enter recipients, content hash, and message content.
 
 ## Email Provider Options
 
@@ -150,6 +154,10 @@ You'll be prompted to enter:
 
 ## Troubleshooting
 
+### "AES-GCM decryption failed"
+- The `s'` value is likely incorrect. Double-check that you have the right off-chain secret.
+- Make sure the `s'` is entered as a hex value starting with `0x`.
+
 ### "Authentication Failed"
 - For Gmail, use OAuth 2.0 or an App Password (not your regular password)
 - Ensure 2FA is enabled on your account
@@ -162,15 +170,12 @@ You'll be prompted to enter:
 - Check the recipient's spam folder
 - Verify the email address is correct
 
-### "Proof Verification Failed"
-- Ensure the `.eml` file hasn't been modified
-- The recipient email must match exactly what's in the contract
-
 ## Security Notes
 
 - **Never commit** `credentials.json` or `token.json` to git
-- **Keep `.eml` files secure** - they contain the full email content
-- The `skShare` in the export allows decryption - treat it as sensitive
+- **Keep `.eml` files secure** — they contain the full email content
+- The `skShare` and `s'` together can decrypt the message — treat both as sensitive
+- The `Farewell-Hash` in the email is used for proof verification, not for security
 
 ## How ZK-Email Proofs Work
 
@@ -179,7 +184,7 @@ The proof system verifies:
 2. The recipient (TO field) matches the committed hash stored on-chain
 3. The email body contains the correct `Farewell-Hash`
 
-This proves you actually sent the email without revealing the email content to anyone but the verifier.
+This proves the claimer actually sent the email without revealing the email content to anyone but the recipient and the verifier.
 
 ## Related Documentation
 
