@@ -510,6 +510,12 @@ Farewell-Hash: {content_hash}
 
 This message was sent via Farewell Protocol (https://farewell.world)
 A zk-email proof may be generated to verify delivery of this message.
+
+---
+
+If you received a claim package JSON and an off-chain secret (s') from the sender,
+you can decrypt additional messages at: https://farewell.world/decrypt/
+Or use the command-line tool: https://github.com/pdroalves/farewell-decrypter
 """
 
     # Plain text version
@@ -535,6 +541,16 @@ A zk-email proof may be generated to verify delivery of this message.
         <p style="color: #666; font-size: 12px; margin-top: 20px;">
             This message was sent via <a href="https://farewell.world">Farewell Protocol</a>.<br>
             A zk-email proof may be generated to verify delivery of this message.
+        </p>
+
+        <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;">
+
+        <p style="color: #888; font-size: 11px;">
+            If you received a claim package JSON and an off-chain secret (s') from the sender,
+            you can decrypt additional messages at
+            <a href="https://farewell.world/decrypt/" style="color: #3b82f6;">farewell.world/decrypt</a>
+            or using the
+            <a href="https://github.com/pdroalves/farewell-decrypter" style="color: #3b82f6;">command-line tool</a>.
         </p>
     </div>
 </body>
