@@ -114,19 +114,22 @@ This hash is extracted by the zk-email circuit to verify the message content mat
    python farewell_claimer.py message.json
    ```
 
-   **Claim package format** (from Farewell UI Claim tab — requires s' to decrypt):
+   **Claim package format** (from Farewell UI Claim tab — the claimer does NOT decrypt):
    ```json
    {
      "type": "farewell-claim-package",
      "recipients": ["alice@example.com"],
-     "skShare": "0x...",
+     "skShare": "...",
      "encryptedPayload": "0x...",
      "contentHash": "0x...",
      "subject": "Farewell Message Delivery"
    }
    ```
+   The claimer extracts recipients, contentHash, and subject. The email body
+   directs recipients to decrypt the message at https://farewell.world/decrypt/
+   or with the farewell-decrypter CLI tool.
 
-   **Direct format** (pre-decrypted):
+   **Direct format** (pre-decrypted, for manual use):
    ```json
    {
      "recipients": ["alice@example.com", "bob@example.com"],
@@ -246,9 +249,9 @@ def generate_proof_structure(
 **IMPORTANT**: The `load_message_from_file()` and `_load_claim_package()` functions parse the JSON exported from the Farewell UI's Claim tab (`ClaimPackageJson` in `Farewell.tsx`, located at `../farewell/packages/site/components/Farewell.tsx`). When modifying the claim package parsing:
 
 1. The claim package is detected by `type: "farewell-claim-package"`
-2. Required fields: `recipients` (array), `skShare` (hex), `encryptedPayload` (hex), `contentHash` (hex)
-3. AES-128-GCM packed format: `0x` + IV(12 bytes) + ciphertext+GCM-tag; key = `skShare XOR s'` as 16-byte big-endian
-4. If you change field names or the decryption logic, update `Farewell.tsx` accordingly
+2. Required fields for claim packages: `recipients` (array), `contentHash` (hex)
+3. The claimer does NOT decrypt the message — it directs recipients to https://farewell.world/decrypt/ or the farewell-decrypter CLI
+4. If you change field names, update `Farewell.tsx` accordingly
 5. The old direct format (`recipients`, `contentHash`, `message`) must continue to work
 
 ## Security Considerations
@@ -265,11 +268,11 @@ When using SMTP (not OAuth), users should generate app-specific passwords rather
 
 ### Full Claiming Workflow
 
-1. **Farewell UI**: Claim message and decrypt
-2. **Farewell UI**: Export JSON via "Export for Claimer Tool" button
-3. **Claimer**: Run `python farewell_claimer.py message.json`
-4. **Claimer**: Select email provider, authenticate
-5. **Claimer**: Emails sent, .eml files saved
+1. **Farewell UI**: Claim message → export claim package JSON
+2. **Claimer**: Run `python farewell_claimer.py claim_package.json`
+3. **Claimer**: Select email provider, authenticate
+4. **Claimer**: Emails sent (directing recipients to decrypt at farewell.world/decrypt), .eml files saved
+5. **Recipient**: Decrypts message at https://farewell.world/decrypt/ or with farewell-decrypter CLI
 6. **Farewell UI**: Upload .eml, click "Prove Delivery" for each recipient
 7. **Farewell UI**: Once all proven, click "Claim Reward"
 
@@ -277,6 +280,7 @@ When using SMTP (not OAuth), users should generate app-specific passwords rather
 
 - **Farewell UI**: https://github.com/pdroalves/farewell
 - **Farewell Core**: https://github.com/pdroalves/farewell-core
+- **Farewell Decrypter**: https://github.com/pdroalves/farewell-decrypter
 - **zk-email**: https://prove.email
 
 ## Git Guidelines

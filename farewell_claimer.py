@@ -694,11 +694,12 @@ def _load_claim_package(data: Dict, filepath: str) -> Optional[Dict]:
     """
     Handle the claim package format from Farewell UI (type: farewell-claim-package).
 
-    This format contains an AES-encrypted message that needs s' (the off-chain
-    secret shared with the recipient) to decrypt.
+    The claimer does not decrypt the message — only the recipient can do that
+    using their off-chain secret (s'). The claimer just needs the recipients,
+    content hash, and subject to send the email and generate proofs.
     """
     # Validate required fields
-    required = ['recipients', 'skShare', 'encryptedPayload', 'contentHash']
+    required = ['recipients', 'contentHash']
     for field in required:
         if field not in data:
             print_error(f"Claim package missing '{field}' field")
@@ -712,23 +713,17 @@ def _load_claim_package(data: Dict, filepath: str) -> Optional[Dict]:
     if not content_hash.startswith('0x'):
         content_hash = '0x' + content_hash
 
-    # Need s' to decrypt the message
-    print_section("AES Decryption")
-    print_info("This claim package contains an encrypted message.")
-    print_info("You need the off-chain secret (s') to decrypt it.")
-    print_info("The recipient should have received s' from the message sender.")
-    print()
-
-    s_prime = prompt("Enter s' (hex, starts with 0x)")
-    if not s_prime.startswith('0x'):
-        s_prime = '0x' + s_prime
-
-    message = decrypt_aes_gcm_packed(data['encryptedPayload'], data['skShare'], s_prime)
-    if message is None:
-        return None
-
-    print_success("Message decrypted successfully!")
-    print()
+    owner = data.get('owner', 'someone')
+    message = (
+        f"You have received a Farewell message from {owner}.\n"
+        f"\n"
+        f"To read the message, you will need:\n"
+        f"  1. The claim package JSON file (attached or shared separately)\n"
+        f"  2. The off-chain secret (s') that {owner} shared with you\n"
+        f"\n"
+        f"Decrypt your message at: https://farewell.world/decrypt/\n"
+        f"Or use the CLI tool: https://github.com/pdroalves/farewell-decrypter"
+    )
 
     result = {
         "recipients": recipients,
