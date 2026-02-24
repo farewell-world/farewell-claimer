@@ -620,9 +620,16 @@ def generate_proof_data(eml_content: str, recipient_email: str, content_hash: st
 
     Note: This generates a placeholder proof structure.
     In production, this would integrate with the actual zk-email circuit prover.
+
+    Public signals:
+      [0] = Hash of normalized recipient email (SHA3-256 placeholder for Poseidon)
+      [1] = DKIM public key hash (placeholder — all zeros)
+      [2] = Content hash (keccak256 of decrypted payload, from claim package)
+
+    See docs/proof-structure.md for the full specification.
     """
     # Compute recipient email hash (matching the contract's expectation)
-    # Using keccak256 as placeholder for Poseidon
+    # Using SHA3-256 as placeholder for Poseidon
     recipient_normalized = recipient_email.lower().strip()
     recipient_hash = "0x" + hashlib.sha3_256(recipient_normalized.encode()).hexdigest()
 
@@ -637,11 +644,91 @@ def generate_proof_data(eml_content: str, recipient_email: str, content_hash: st
         "publicSignals": [
             recipient_hash,      # [0] recipient email hash
             dkim_pubkey_hash,    # [1] DKIM pubkey hash
-            content_hash         # [2] content hash
+            content_hash         # [2] content hash (from on-chain payloadContentHash)
         ]
     }
 
     return proof
+
+
+def build_delivery_proof(
+    owner: str,
+    message_index: int,
+    recipient_proofs: List[Dict],
+) -> Dict:
+    """
+    Build the DeliveryProofJson envelope that the Farewell UI expects.
+
+    Args:
+        owner: The deceased user's address.
+        message_index: The message index on-chain.
+        recipient_proofs: List of dicts with recipientIndex, proof, and email.
+
+    Returns:
+        Dict matching the DeliveryProofJson interface (type "farewell-delivery-proof").
+    """
+    return {
+        "version": 1,
+        "type": "farewell-delivery-proof",
+        "owner": owner,
+        "messageIndex": message_index,
+        "recipients": recipient_proofs,
+        "metadata": {
+            "generatedAt": datetime.now().isoformat(),
+            "toolVersion": "farewell-claimer",
+        },
+    }
+
+
+def validate_delivery_proof(proof: Dict) -> Tuple[bool, str]:
+    """
+    Validate a DeliveryProofJson structure for completeness and format.
+
+    Returns (True, "") if valid, or (False, error_message) if invalid.
+    """
+    if not isinstance(proof, dict):
+        return False, "Proof must be a JSON object"
+
+    if proof.get("type") != "farewell-delivery-proof":
+        return False, 'Missing or wrong "type" (expected "farewell-delivery-proof")'
+
+    if "owner" not in proof or not proof["owner"]:
+        return False, 'Missing "owner" field'
+
+    if "messageIndex" not in proof:
+        return False, 'Missing "messageIndex" field'
+
+    recipients = proof.get("recipients")
+    if not isinstance(recipients, list) or len(recipients) == 0:
+        return False, '"recipients" must be a non-empty array'
+
+    for i, r in enumerate(recipients):
+        if "recipientIndex" not in r:
+            return False, f'recipients[{i}] missing "recipientIndex"'
+
+        p = r.get("proof")
+        if not isinstance(p, dict):
+            return False, f'recipients[{i}] missing "proof" object'
+
+        for field in ("pA", "pB", "pC", "publicSignals"):
+            if field not in p:
+                return False, f'recipients[{i}].proof missing "{field}"'
+
+        if not isinstance(p["pA"], list) or len(p["pA"]) != 2:
+            return False, f'recipients[{i}].proof.pA must be a 2-element array'
+
+        if (not isinstance(p["pB"], list) or len(p["pB"]) != 2
+                or not all(isinstance(row, list) and len(row) == 2 for row in p["pB"])):
+            return False, f'recipients[{i}].proof.pB must be a 2x2 array'
+
+        if not isinstance(p["pC"], list) or len(p["pC"]) != 2:
+            return False, f'recipients[{i}].proof.pC must be a 2-element array'
+
+        signals = p["publicSignals"]
+        if not isinstance(signals, list) or len(signals) < 3:
+            return False, f'recipients[{i}].proof.publicSignals must have at least 3 elements'
+
+    return True, ""
 
 def save_proof(proof: Dict, filename: str, output_dir: str = "proofs") -> str:
     """Save proof as JSON file."""
@@ -987,17 +1074,11 @@ This tool will help you:
     # Save combined delivery proof JSON (matches Farewell UI DeliveryProofJson)
     delivery_proof_path = None
     if recipient_proofs:
-        delivery_proof = {
-            "version": 1,
-            "type": "farewell-delivery-proof",
-            "owner": msg_info.get('owner', ''),
-            "messageIndex": msg_info.get('message_index', 0),
-            "recipients": recipient_proofs,
-            "metadata": {
-                "generatedAt": datetime.now().isoformat(),
-                "toolVersion": "farewell-claimer",
-            },
-        }
+        delivery_proof = build_delivery_proof(
+            owner=msg_info.get('owner', ''),
+            message_index=msg_info.get('message_index', 0),
+            recipient_proofs=recipient_proofs,
+        )
         delivery_proof_path = save_proof(delivery_proof, "delivery-proof.json", proofs_dir)
         print()
         print_success(f"Saved delivery proof: {delivery_proof_path}")

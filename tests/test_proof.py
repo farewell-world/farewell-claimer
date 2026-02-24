@@ -7,7 +7,12 @@ import json
 from pathlib import Path
 
 import farewell_claimer
-from farewell_claimer import generate_proof_data, save_proof
+from farewell_claimer import (
+    generate_proof_data,
+    save_proof,
+    build_delivery_proof,
+    validate_delivery_proof,
+)
 
 
 class TestGenerateProofData:
@@ -186,6 +191,172 @@ class TestSaveProof:
         assert "\n" in content
 
 
+class TestBuildDeliveryProof:
+    """Tests for building the DeliveryProofJson envelope."""
+
+    def test_build_delivery_proof_structure(self, sample_eml_content):
+        """Built proof has correct top-level structure."""
+        proof = generate_proof_data(sample_eml_content, "a@b.com", "0x1234")
+        dp = build_delivery_proof(
+            owner="0xabc",
+            message_index=3,
+            recipient_proofs=[{"recipientIndex": 0, "proof": proof, "email": "a@b.com"}],
+        )
+        assert dp["type"] == "farewell-delivery-proof"
+        assert dp["version"] == 1
+        assert dp["owner"] == "0xabc"
+        assert dp["messageIndex"] == 3
+        assert len(dp["recipients"]) == 1
+        assert "metadata" in dp
+
+    def test_build_delivery_proof_multi_recipient(self, sample_eml_content):
+        """Multi-recipient proofs are all included."""
+        entries = []
+        for i, email in enumerate(["a@b.com", "c@d.com", "e@f.com"]):
+            proof = generate_proof_data(sample_eml_content, email, "0xaabb")
+            entries.append({"recipientIndex": i, "proof": proof, "email": email})
+
+        dp = build_delivery_proof("0x1", 0, entries)
+        assert len(dp["recipients"]) == 3
+        # Each recipient has distinct email hash
+        hashes = [r["proof"]["publicSignals"][0] for r in dp["recipients"]]
+        assert len(set(hashes)) == 3
+
+
+class TestValidateDeliveryProof:
+    """Tests for delivery proof validation."""
+
+    def _make_valid_proof(self):
+        """Helper: build a minimal valid delivery proof."""
+        return {
+            "version": 1,
+            "type": "farewell-delivery-proof",
+            "owner": "0xabc",
+            "messageIndex": 0,
+            "recipients": [
+                {
+                    "recipientIndex": 0,
+                    "proof": {
+                        "pA": ["0x0", "0x0"],
+                        "pB": [["0x0", "0x0"], ["0x0", "0x0"]],
+                        "pC": ["0x0", "0x0"],
+                        "publicSignals": ["0xa", "0xb", "0xc"],
+                    },
+                    "email": "test@example.com",
+                }
+            ],
+        }
+
+    def test_valid_proof_passes(self):
+        """A well-formed proof validates successfully."""
+        ok, err = validate_delivery_proof(self._make_valid_proof())
+        assert ok is True
+        assert err == ""
+
+    def test_wrong_type_fails(self):
+        """Wrong type field is rejected."""
+        p = self._make_valid_proof()
+        p["type"] = "something-else"
+        ok, err = validate_delivery_proof(p)
+        assert ok is False
+        assert "type" in err
+
+    def test_missing_type_fails(self):
+        """Missing type field is rejected."""
+        p = self._make_valid_proof()
+        del p["type"]
+        ok, err = validate_delivery_proof(p)
+        assert ok is False
+
+    def test_missing_owner_fails(self):
+        """Missing owner is rejected."""
+        p = self._make_valid_proof()
+        del p["owner"]
+        ok, err = validate_delivery_proof(p)
+        assert ok is False
+        assert "owner" in err
+
+    def test_missing_message_index_fails(self):
+        """Missing messageIndex is rejected."""
+        p = self._make_valid_proof()
+        del p["messageIndex"]
+        ok, err = validate_delivery_proof(p)
+        assert ok is False
+        assert "messageIndex" in err
+
+    def test_empty_recipients_fails(self):
+        """Empty recipients array is rejected."""
+        p = self._make_valid_proof()
+        p["recipients"] = []
+        ok, err = validate_delivery_proof(p)
+        assert ok is False
+        assert "recipients" in err
+
+    def test_missing_recipient_index_fails(self):
+        """Recipient without recipientIndex is rejected."""
+        p = self._make_valid_proof()
+        del p["recipients"][0]["recipientIndex"]
+        ok, err = validate_delivery_proof(p)
+        assert ok is False
+        assert "recipientIndex" in err
+
+    def test_missing_proof_object_fails(self):
+        """Recipient without proof object is rejected."""
+        p = self._make_valid_proof()
+        del p["recipients"][0]["proof"]
+        ok, err = validate_delivery_proof(p)
+        assert ok is False
+        assert "proof" in err
+
+    def test_missing_public_signals_fails(self):
+        """Proof without publicSignals is rejected."""
+        p = self._make_valid_proof()
+        del p["recipients"][0]["proof"]["publicSignals"]
+        ok, err = validate_delivery_proof(p)
+        assert ok is False
+        assert "publicSignals" in err
+
+    def test_too_few_public_signals_fails(self):
+        """publicSignals with fewer than 3 elements is rejected."""
+        p = self._make_valid_proof()
+        p["recipients"][0]["proof"]["publicSignals"] = ["0xa", "0xb"]
+        ok, err = validate_delivery_proof(p)
+        assert ok is False
+        assert "publicSignals" in err
+
+    def test_wrong_pa_shape_fails(self):
+        """pA with wrong array length is rejected."""
+        p = self._make_valid_proof()
+        p["recipients"][0]["proof"]["pA"] = ["0x0"]
+        ok, err = validate_delivery_proof(p)
+        assert ok is False
+        assert "pA" in err
+
+    def test_wrong_pb_shape_fails(self):
+        """pB that is not a 2x2 matrix is rejected."""
+        p = self._make_valid_proof()
+        p["recipients"][0]["proof"]["pB"] = [["0x0"], ["0x0", "0x0"]]
+        ok, err = validate_delivery_proof(p)
+        assert ok is False
+        assert "pB" in err
+
+    def test_not_a_dict_fails(self):
+        """Non-dict input is rejected."""
+        ok, err = validate_delivery_proof("not a dict")
+        assert ok is False
+
+    def test_content_hash_passthrough(self, sample_eml_content):
+        """Content hash from claim package appears in publicSignals[2]."""
+        content_hash = "0x" + "ff" * 32
+        proof = generate_proof_data(sample_eml_content, "a@b.com", content_hash)
+        dp = build_delivery_proof("0x1", 0, [
+            {"recipientIndex": 0, "proof": proof, "email": "a@b.com"}
+        ])
+        ok, _ = validate_delivery_proof(dp)
+        assert ok is True
+        assert dp["recipients"][0]["proof"]["publicSignals"][2] == content_hash
+
+
 class TestProofIntegration:
     """Integration tests for proof generation workflow."""
 
@@ -208,3 +379,34 @@ class TestProofIntegration:
         assert loaded["pA"] == proof["pA"]
         assert loaded["pB"] == proof["pB"]
         assert loaded["pC"] == proof["pC"]
+
+    def test_full_delivery_proof_workflow(self, sample_eml_content, temp_output_dir):
+        """Test complete delivery proof build → validate → save → reload workflow."""
+        recipients = ["alice@test.com", "bob@test.com"]
+        content_hash = "0x" + "cd" * 32
+
+        # Generate per-recipient proofs
+        entries = []
+        for i, email in enumerate(recipients):
+            proof = generate_proof_data(sample_eml_content, email, content_hash)
+            entries.append({"recipientIndex": i, "proof": proof, "email": email})
+
+        # Build envelope
+        dp = build_delivery_proof("0xDEAD", 5, entries)
+
+        # Validate
+        ok, err = validate_delivery_proof(dp)
+        assert ok is True, err
+
+        # Save and reload
+        filepath = save_proof(dp, "delivery-proof.json", temp_output_dir)
+        with open(filepath, 'r') as f:
+            loaded = json.load(f)
+
+        assert loaded["type"] == "farewell-delivery-proof"
+        assert loaded["owner"] == "0xDEAD"
+        assert loaded["messageIndex"] == 5
+        assert len(loaded["recipients"]) == 2
+        for i, r in enumerate(loaded["recipients"]):
+            assert r["recipientIndex"] == i
+            assert r["proof"]["publicSignals"][2] == content_hash
