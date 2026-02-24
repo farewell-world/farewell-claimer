@@ -1,4 +1,7 @@
 # Farewell Claimer
+
+[![CI](https://github.com/farewell-world/farewell-claimer/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/farewell-world/farewell-claimer/actions/workflows/ci.yml?query=branch%3Amain)
+
 <p align="center"> <img src="assets/farewell-logo.png" alt="Farewell Logo" width="600"/> </p>
 
 A command-line tool for Farewell message claimers to send emails to recipients and generate zk-email proofs for claiming rewards on the Farewell smart contract.
