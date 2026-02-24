@@ -512,7 +512,7 @@ A zk-email proof may be generated to verify delivery of this message.
 
 To decrypt your Farewell message, use the attached claim package JSON
 along with your off-chain secret (s') at: https://farewell.world/decrypt/
-Or use the command-line tool: https://github.com/pdroalves/farewell-decrypter
+Or use the command-line tool: https://github.com/farewell-world/farewell-decrypter
 """
 
     # Plain text version
@@ -547,7 +547,7 @@ Or use the command-line tool: https://github.com/pdroalves/farewell-decrypter
             along with your off-chain secret (s') at
             <a href="https://farewell.world/decrypt/" style="color: #3b82f6;">farewell.world/decrypt</a>
             or using the
-            <a href="https://github.com/pdroalves/farewell-decrypter" style="color: #3b82f6;">command-line tool</a>.
+            <a href="https://github.com/farewell-world/farewell-decrypter" style="color: #3b82f6;">command-line tool</a>.
         </p>
     </div>
 </body>
@@ -824,7 +824,7 @@ def _load_claim_package(data: Dict, filepath: str) -> Optional[Dict]:
         f"  2. The off-chain secret (s') that {owner} shared with you\n"
         f"\n"
         f"Decrypt your message at: https://farewell.world/decrypt/\n"
-        f"Or use the CLI tool: https://github.com/pdroalves/farewell-decrypter"
+        f"Or use the CLI tool: https://github.com/farewell-world/farewell-decrypter"
     )
 
     result = {

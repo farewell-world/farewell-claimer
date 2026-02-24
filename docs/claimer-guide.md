@@ -25,13 +25,13 @@ When someone passes away and their Farewell messages are released, claimers can:
 - The off-chain secret `s'` (the recipient should have received this from the message sender)
 - Access to an email account (Gmail recommended with OAuth 2.0)
 - Python 3.8+ installed
-- The [farewell-claimer](https://github.com/pdroalves/farewell-claimer) tool
+- The [farewell-claimer](https://github.com/farewell-world/farewell-claimer) tool
 
 ## Step 1: Install the Claimer Tool
 
 ```bash
 # Clone the repository
-git clone https://github.com/pdroalves/farewell-claimer.git
+git clone https://github.com/farewell-world/farewell-claimer.git
 cd farewell-claimer
 
 # Create virtual environment
@@ -188,6 +188,6 @@ This proves the claimer actually sent the email without revealing the email cont
 
 ## Related Documentation
 
-- [farewell-claimer README](https://github.com/pdroalves/farewell-claimer)
-- [farewell-core Protocol](https://github.com/pdroalves/farewell-core)
+- [farewell-claimer README](https://github.com/farewell-world/farewell-claimer)
+- [farewell-core Protocol](https://github.com/farewell-world/farewell-core)
 - [zk.email Documentation](https://docs.zk.email/)
