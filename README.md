@@ -244,7 +244,7 @@ When loading a claim package from the Farewell UI, the tool:
 3. Reconstructs the AES key: `sk = skShare XOR s'`
 4. Decrypts the AES-128-GCM encrypted payload to recover the original message
 
-This is the [key sharing scheme](https://github.com/pdroalves/farewell-core#key-sharing-scheme) used by Farewell — the message can only be decrypted by combining the on-chain key share with the off-chain secret.
+This is the [key sharing scheme](https://github.com/farewell-world/farewell-core#key-sharing-scheme) used by Farewell — the message can only be decrypted by combining the on-chain key share with the off-chain secret.
 
 ### Email Sending
 
@@ -292,8 +292,8 @@ BSD 3-Clause License - see [LICENSE](LICENSE) for details.
 
 ## Related Projects
 
-- [Farewell Protocol](https://github.com/pdroalves/farewell) - Main application
-- [Farewell Core](https://github.com/pdroalves/farewell-core) - Smart contracts
+- [Farewell Protocol](https://github.com/farewell-world/farewell) - Main application
+- [Farewell Core](https://github.com/farewell-world/farewell-core) - Smart contracts
 
 ## Contributing
 
