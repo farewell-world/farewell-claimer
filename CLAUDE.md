@@ -23,7 +23,8 @@ farewell-claimer/
 │   ├── test_proof.py        # Proof generation tests
 │   └── test_ui.py           # UI helper tests
 ├── docs/
-│   └── claimer-guide.md     # Step-by-step user guide
+│   ├── claimer-guide.md     # Step-by-step user guide
+│   └── proof-structure.md   # Delivery proof format & verification spec
 ├── assets/
 │   └── farewell-logo.png    # Project logo
 ├── requirements.txt         # Runtime dependencies
@@ -189,9 +190,11 @@ def create_farewell_email(
     recipient: str,
     subject: str,
     message_body: str,
-    content_hash: str
+    content_hash: str,
+    attachment_json: str = None,
+    attachment_filename: str = None,
 ) -> MIMEMultipart:
-    """Create MIME email with Farewell-Hash embedded in body."""
+    """Create MIME email with Farewell-Hash in body and optional JSON attachment."""
 ```
 
 ### Email Sending
@@ -212,16 +215,27 @@ def send_email_gmail_api(
     """Send via Gmail API with OAuth 2.0."""
 ```
 
-### Proof Generation
+### Proof Generation & Validation
+
+See [docs/proof-structure.md](docs/proof-structure.md) for full specification with ASCII diagrams.
 
 ```python
-def generate_proof_structure(
+def generate_proof_data(
+    eml_content: str,
     recipient_email: str,
     content_hash: str,
-    email_date: str,
-    sender_email: str
 ) -> Dict:
-    """Generate zk-email proof structure for blockchain submission."""
+    """Generate per-recipient zk-email proof data (pA, pB, pC, publicSignals)."""
+
+def build_delivery_proof(
+    owner: str,
+    message_index: int,
+    recipient_proofs: List[Dict],
+) -> Dict:
+    """Build DeliveryProofJson envelope wrapping all recipient proofs."""
+
+def validate_delivery_proof(proof: Any) -> Tuple[bool, str]:
+    """Validate structural correctness of a DeliveryProofJson. Returns (ok, error)."""
 ```
 
 ## Development Guidelines
