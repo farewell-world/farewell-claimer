@@ -30,6 +30,7 @@ import base64
 import argparse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.application import MIMEApplication
 from email.utils import formatdate, make_msgid
 from datetime import datetime
 from pathlib import Path
@@ -489,17 +490,13 @@ def create_farewell_email(
     recipient_email: str,
     subject: str,
     message_body: str,
-    content_hash: str
+    content_hash: str,
+    attachment_json: Optional[str] = None,
+    attachment_filename: Optional[str] = None
 ) -> MIMEMultipart:
-    """Create an email with Farewell-Hash embedded."""
-    msg = MIMEMultipart('alternative')
-
-    # Headers
-    msg['From'] = f"{sender_name} <{sender_email}>"
-    msg['To'] = recipient_email
-    msg['Subject'] = subject
-    msg['Date'] = formatdate(localtime=True)
-    msg['Message-ID'] = make_msgid(domain=sender_email.split('@')[1])
+    """Create an email with Farewell-Hash embedded and optional JSON attachment."""
+    # Build the text body parts (plain + HTML) as an alternative sub-message
+    body_alt = MIMEMultipart('alternative')
 
     # Body with Farewell-Hash
     body_with_hash = f"""{message_body}
@@ -513,14 +510,14 @@ A zk-email proof may be generated to verify delivery of this message.
 
 ---
 
-If you received a claim package JSON and an off-chain secret (s') from the sender,
-you can decrypt additional messages at: https://farewell.world/decrypt/
+To decrypt your Farewell message, use the attached claim package JSON
+along with your off-chain secret (s') at: https://farewell.world/decrypt/
 Or use the command-line tool: https://github.com/pdroalves/farewell-decrypter
 """
 
     # Plain text version
     text_part = MIMEText(body_with_hash, 'plain', 'utf-8')
-    msg.attach(text_part)
+    body_alt.attach(text_part)
 
     # HTML version
     html_body = f"""
@@ -546,8 +543,8 @@ Or use the command-line tool: https://github.com/pdroalves/farewell-decrypter
         <hr style="margin: 20px 0; border: none; border-top: 1px solid #eee;">
 
         <p style="color: #888; font-size: 11px;">
-            If you received a claim package JSON and an off-chain secret (s') from the sender,
-            you can decrypt additional messages at
+            To decrypt your Farewell message, use the attached claim package JSON
+            along with your off-chain secret (s') at
             <a href="https://farewell.world/decrypt/" style="color: #3b82f6;">farewell.world/decrypt</a>
             or using the
             <a href="https://github.com/pdroalves/farewell-decrypter" style="color: #3b82f6;">command-line tool</a>.
@@ -557,7 +554,25 @@ Or use the command-line tool: https://github.com/pdroalves/farewell-decrypter
 </html>
 """
     html_part = MIMEText(html_body, 'html', 'utf-8')
-    msg.attach(html_part)
+    body_alt.attach(html_part)
+
+    # If there's an attachment, wrap in mixed; otherwise just use the alternative
+    if attachment_json:
+        msg = MIMEMultipart('mixed')
+        msg.attach(body_alt)
+        att = MIMEApplication(attachment_json.encode('utf-8'), _subtype='json')
+        fname = attachment_filename or 'farewell-claim-package.json'
+        att.add_header('Content-Disposition', 'attachment', filename=fname)
+        msg.attach(att)
+    else:
+        msg = body_alt
+
+    # Headers
+    msg['From'] = f"{sender_name} <{sender_email}>"
+    msg['To'] = recipient_email
+    msg['Subject'] = subject
+    msg['Date'] = formatdate(localtime=True)
+    msg['Message-ID'] = make_msgid(domain=sender_email.split('@')[1])
 
     return msg
 
@@ -729,7 +744,11 @@ def _load_claim_package(data: Dict, filepath: str) -> Optional[Dict]:
         "recipients": recipients,
         "content_hash": content_hash,
         "message": message,
-        "subject": data.get('subject', 'Farewell Message Delivery')
+        "subject": data.get('subject', 'Farewell Message Delivery'),
+        "owner": data.get('owner', ''),
+        "message_index": data.get('messageIndex', 0),
+        "claim_package_json": json.dumps(data, indent=2),
+        "claim_package_filename": Path(filepath).name,
     }
 
     print_success(f"Loaded claim package from: {filepath}")
@@ -913,6 +932,7 @@ This tool will help you:
     proofs_dir = f"farewell_proofs_{timestamp}"
 
     results = []
+    recipient_proofs = []
     for i, recipient in enumerate(msg_info['recipients'], 1):
         print(f"\n{Fore.CYAN}[{i}/{len(msg_info['recipients'])}]{Style.RESET_ALL} Processing: {recipient}")
 
@@ -924,7 +944,9 @@ This tool will help you:
             recipient_email=recipient,
             subject=subject,
             message_body=msg_info['message'],
-            content_hash=msg_info['content_hash']
+            content_hash=msg_info['content_hash'],
+            attachment_json=msg_info.get('claim_package_json'),
+            attachment_filename=msg_info.get('claim_package_filename'),
         )
 
         # Send email
@@ -943,23 +965,42 @@ This tool will help you:
         eml_path = save_eml(raw_msg, eml_filename, proofs_dir)
         print_success(f"Saved .eml: {eml_path}")
 
-        # Generate proof
+        # Generate per-recipient proof
         print_info("Generating proof...")
         proof = generate_proof_data(raw_msg, recipient, msg_info['content_hash'])
-        proof_filename = f"proof_{i}_{recipient.replace('@', '_at_')}.json"
-        proof_path = save_proof(proof, proof_filename, proofs_dir)
-        print_success(f"Saved proof: {proof_path}")
+        recipient_proofs.append({
+            "recipientIndex": i - 1,
+            "proof": proof,
+            "email": recipient,
+        })
 
         results.append({
             "recipient": recipient,
             "success": True,
             "eml_path": eml_path,
-            "proof_path": proof_path
         })
 
         # Small delay between emails
         if i < len(msg_info['recipients']):
             time.sleep(1)
+
+    # Save combined delivery proof JSON (matches Farewell UI DeliveryProofJson)
+    delivery_proof_path = None
+    if recipient_proofs:
+        delivery_proof = {
+            "version": 1,
+            "type": "farewell-delivery-proof",
+            "owner": msg_info.get('owner', ''),
+            "messageIndex": msg_info.get('message_index', 0),
+            "recipients": recipient_proofs,
+            "metadata": {
+                "generatedAt": datetime.now().isoformat(),
+                "toolVersion": "farewell-claimer",
+            },
+        }
+        delivery_proof_path = save_proof(delivery_proof, "delivery-proof.json", proofs_dir)
+        print()
+        print_success(f"Saved delivery proof: {delivery_proof_path}")
 
     # Final Summary
     print_section("Results")
@@ -975,7 +1016,9 @@ This tool will help you:
         for r in successful:
             print(f"  {Fore.GREEN}✓{Style.RESET_ALL} {r['recipient']}")
             print(f"    .eml:   {r['eml_path']}")
-            print(f"    proof:  {r['proof_path']}")
+        if delivery_proof_path:
+            print()
+            print(f"  {Fore.WHITE}Delivery proof:{Style.RESET_ALL} {delivery_proof_path}")
 
     if failed:
         print()
