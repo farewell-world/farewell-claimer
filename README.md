@@ -292,7 +292,7 @@ BSD 3-Clause License - see [LICENSE](LICENSE) for details.
 
 ## Related Projects
 
-- [Farewell Protocol](https://github.com/farewell-world/farewell) - Main application
+- [Farewell Protocol](https://farewell.world) - Main application
 - [Farewell Core](https://github.com/farewell-world/farewell-core) - Smart contracts
 
 ## Contributing

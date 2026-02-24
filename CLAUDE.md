@@ -292,7 +292,7 @@ When using SMTP (not OAuth), users should generate app-specific passwords rather
 
 ## Related Projects
 
-- **Farewell UI**: https://github.com/farewell-world/farewell
+- **Farewell UI**: https://farewell.world
 - **Farewell Core**: https://github.com/farewell-world/farewell-core
 - **Farewell Decrypter**: https://github.com/farewell-world/farewell-decrypter
 - **zk-email**: https://prove.email
