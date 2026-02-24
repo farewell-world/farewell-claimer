@@ -260,12 +260,12 @@ def validate_delivery_proof(proof: Any) -> Tuple[bool, str]:
 
 ## Cross-Project Compatibility: Farewell UI
 
-**IMPORTANT**: The `load_message_from_file()` and `_load_claim_package()` functions parse the JSON exported from the Farewell UI's Claim tab (`ClaimPackageJson` in `Farewell.tsx`, located at `../farewell/packages/site/components/Farewell.tsx`). When modifying the claim package parsing:
+**IMPORTANT**: The `load_message_from_file()` and `_load_claim_package()` functions parse the JSON exported from the [Farewell UI](https://farewell.world) Claim tab. When modifying the claim package parsing:
 
 1. The claim package is detected by `type: "farewell-claim-package"`
 2. Required fields for claim packages: `recipients` (array), `contentHash` (hex)
 3. The claimer does NOT decrypt the message — it directs recipients to https://farewell.world/decrypt/ or the farewell-decrypter CLI
-4. If you change field names, update `Farewell.tsx` accordingly
+4. If you change field names, update the Farewell UI accordingly
 5. The old direct format (`recipients`, `contentHash`, `message`) must continue to work
 
 ## Security Considerations
