@@ -816,12 +816,29 @@ def _load_claim_package(data: Dict, filepath: str) -> Optional[Dict]:
         content_hash = '0x' + content_hash
 
     owner = data.get('owner', 'someone')
+    crypto_scheme = data.get('cryptoScheme', '')
+    passphrase_hint = data.get('passphraseHint', '')
+
+    # Build the instruction message based on crypto scheme
+    if crypto_scheme and ';' in crypto_scheme:
+        # Passphrase mode (e.g., "AES-128-GCM;SHAKE128")
+        secret_instructions = (
+            f"  2. The passphrase that {owner} shared with you\n"
+        )
+        if passphrase_hint:
+            secret_instructions += f"\n  Hint for your passphrase: {passphrase_hint}\n"
+    else:
+        # Raw hex mode (e.g., "AES-128-GCM" or empty)
+        secret_instructions = (
+            f"  2. The off-chain secret (s') that {owner} shared with you\n"
+        )
+
     message = (
         f"You have received a Farewell message from {owner}.\n"
         f"\n"
         f"To read the message, you will need:\n"
         f"  1. The claim package JSON file (attached or shared separately)\n"
-        f"  2. The off-chain secret (s') that {owner} shared with you\n"
+        f"{secret_instructions}"
         f"\n"
         f"Decrypt your message at: https://farewell.world/decrypt/\n"
         f"Or use the CLI tool: https://github.com/farewell-world/farewell-decrypter"
@@ -836,11 +853,17 @@ def _load_claim_package(data: Dict, filepath: str) -> Optional[Dict]:
         "message_index": data.get('messageIndex', 0),
         "claim_package_json": json.dumps(data, indent=2),
         "claim_package_filename": Path(filepath).name,
+        "crypto_scheme": crypto_scheme,
+        "passphrase_hint": passphrase_hint,
     }
 
     print_success(f"Loaded claim package from: {filepath}")
     print_info(f"  Recipients: {len(result['recipients'])}")
     print_info(f"  Content hash: {result['content_hash'][:20]}...")
+    if crypto_scheme:
+        print_info(f"  Crypto scheme: {crypto_scheme}")
+    if passphrase_hint:
+        print_info(f"  Passphrase hint: {passphrase_hint}")
 
     return result
 
