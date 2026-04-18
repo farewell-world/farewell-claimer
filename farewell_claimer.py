@@ -64,6 +64,30 @@ try:
 except ImportError:
     pass  # AES decryption is optional, only needed for claim packages
 
+# Ethereum-flavored keccak256 (NOT SHA3-256 — they differ in padding)
+# Required so that publicSignals[0] matches on-chain m.recipientEmailHashes,
+# which the Farewell site computes via ethers.keccak256(toUtf8Bytes(...)).
+try:
+    from eth_utils import keccak as _keccak  # type: ignore
+except ImportError:  # pragma: no cover
+    _keccak = None  # Will fail at proof time with a clear error
+
+
+def keccak256_hex(data: bytes) -> str:
+    """Keccak-256 of bytes, returned as 0x-prefixed hex string.
+
+    Uses eth_utils.keccak if available. This is the same hash the Farewell
+    site uses for on-chain email commitments (see packages/site/lib/delivery/
+    zkemail.ts:computeEmailHash), so proofs produced by the claimer line up
+    with the commitments the contract stores.
+    """
+    if _keccak is None:
+        raise RuntimeError(
+            "eth-utils is required for keccak256 hashing. "
+            "Install it with: pip install eth-utils"
+        )
+    return "0x" + _keccak(data).hex()
+
 # ============ Configuration ============
 
 @dataclass
@@ -614,41 +638,172 @@ def save_eml(raw_message: str, filename: str, output_dir: str = "proofs") -> str
 
 # ============ Proof Generation ============
 
+# DKIM public-key hashes mirrored from the Farewell site
+# (packages/site/lib/delivery/zkemail.ts::extractDkimPubkeyHash). These are
+# placeholder values until real DKIM public keys are extracted from DNS and
+# their hashes registered on-chain via Farewell.setTrustedDkimKey. Any domain
+# not in this map falls back to keccak256("<selector>._domainkey.<domain>").
+KNOWN_DKIM_PUBKEY_HASHES: Dict[str, str] = {
+    "gmail.com":      "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+    "googlemail.com": "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+    "outlook.com":    "0x2345678901bcdef02345678901bcdef02345678901bcdef02345678901bcdef0",
+    "hotmail.com":    "0x2345678901bcdef02345678901bcdef02345678901bcdef02345678901bcdef0",
+    "yahoo.com":      "0x3456789012cdef013456789012cdef013456789012cdef013456789012cdef01",
+    "icloud.com":     "0x4567890123def0124567890123def0124567890123def0124567890123def012",
+}
+
+ZERO_HASH_HEX = "0x" + "0" * 64
+
+
+def extract_dkim_domain_and_selector(eml_content: str) -> Tuple[Optional[str], Optional[str]]:
+    """Pull the DKIM-Signature d= (domain) and s= (selector) tags out of an .eml.
+
+    Returns (domain, selector). Either may be None if the header is missing.
+    Matches the site's ``extractDkimPubkeyHash`` parsing in zkemail.ts.
+    """
+    import re
+
+    # DKIM-Signature headers span multiple folded lines. Reassemble.
+    lines = eml_content.splitlines()
+    header_lines: List[str] = []
+    capturing = False
+    for line in lines:
+        if not line:
+            if capturing:
+                break
+            continue
+        if line.startswith(" ") or line.startswith("\t"):
+            if capturing:
+                header_lines.append(line.strip())
+            continue
+        if capturing:
+            break
+        if line.lower().startswith("dkim-signature:"):
+            header_lines.append(line.split(":", 1)[1].strip())
+            capturing = True
+
+    if not header_lines:
+        return None, None
+
+    dkim_header = " ".join(header_lines)
+    d_match = re.search(r"\bd=([^;\s]+)", dkim_header)
+    s_match = re.search(r"\bs=([^;\s]+)", dkim_header)
+    return (
+        d_match.group(1).lower() if d_match else None,
+        s_match.group(1) if s_match else None,
+    )
+
+
+def compute_dkim_pubkey_hash(domain: Optional[str], selector: Optional[str]) -> str:
+    """Return the placeholder DKIM pubkey hash the claimer should submit.
+
+    Prefer the hardcoded per-domain value from the site's map. Fall back to
+    ``keccak256("<selector>._domainkey.<domain>")``. If neither is available
+    we emit the all-zero hash, which will fail the on-chain trusted-DKIM
+    check — but it's visible in the CLI output and flagged with a warning.
+    """
+    if domain and domain in KNOWN_DKIM_PUBKEY_HASHES:
+        return KNOWN_DKIM_PUBKEY_HASHES[domain]
+    if domain and selector:
+        return keccak256_hex(f"{selector}._domainkey.{domain}".encode())
+    return ZERO_HASH_HEX
+
+
+def run_external_prover(
+    prover_cmd: str,
+    eml_content: str,
+    recipient_email: str,
+    content_hash: str,
+    public_signals: List[str],
+) -> Dict:
+    """Shell out to a user-supplied Groth16 prover.
+
+    The command receives the .eml file on stdin and a JSON blob describing
+    the expected public signals on the first line of stdin. It must print a
+    JSON object with pA/pB/pC fields to stdout. This is the extension point
+    for real zk-email circuit integration (e.g. snarkjs, prove.email CLI,
+    Rust prover). Fail loudly on any non-zero exit or malformed output —
+    we'd rather stop the user than ship a broken proof.
+    """
+    import subprocess
+
+    payload = {
+        "recipient": recipient_email,
+        "contentHash": content_hash,
+        "publicSignals": public_signals,
+    }
+    try:
+        proc = subprocess.run(
+            prover_cmd,
+            shell=True,
+            input=json.dumps(payload) + "\n" + eml_content,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"external prover timed out after 120s: {exc}") from exc
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"external prover exited {proc.returncode}\nstderr: {proc.stderr.strip()}"
+        )
+    try:
+        result = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"external prover output is not JSON: {proc.stdout!r}"
+        ) from exc
+    for key in ("pA", "pB", "pC"):
+        if key not in result:
+            raise RuntimeError(f"external prover output missing '{key}' field")
+    return result
+
+
 def generate_proof_data(eml_content: str, recipient_email: str, content_hash: str) -> Dict:
+    """Generate the Groth16 delivery proof that Farewell.proveDelivery expects.
+
+    Public signals (see farewell-core/docs/proof-structure.md):
+      [0] recipient email commitment — keccak256(normalized email), matching
+          the site's on-chain commitment until a real Poseidon circuit ships
+      [1] DKIM public-key hash — extracted from the .eml DKIM-Signature header
+          and resolved via the shared placeholder map
+      [2] payload content hash — keccak256 of the decrypted message body,
+          echoed from the claim package (never recomputed locally)
+
+    Groth16 pA/pB/pC: if the ``FAREWELL_PROVER_CMD`` env var is set, we shell
+    out to that command to produce the points (see ``run_external_prover``).
+    Otherwise we emit zeros and the caller is responsible for warning the
+    user — see the warning banner raised in the CLI flow.
     """
-    Generate proof data from .eml file.
-
-    Note: This generates a placeholder proof structure.
-    In production, this would integrate with the actual zk-email circuit prover.
-
-    Public signals:
-      [0] = Hash of normalized recipient email (SHA3-256 placeholder for Poseidon)
-      [1] = DKIM public key hash (placeholder — all zeros)
-      [2] = Content hash (keccak256 of decrypted payload, from claim package)
-
-    See docs/proof-structure.md for the full specification.
-    """
-    # Compute recipient email hash (matching the contract's expectation)
-    # Using SHA3-256 as placeholder for Poseidon
     recipient_normalized = recipient_email.lower().strip()
-    recipient_hash = "0x" + hashlib.sha3_256(recipient_normalized.encode()).hexdigest()
+    recipient_hash = keccak256_hex(recipient_normalized.encode())
 
-    # Extract DKIM info (simplified)
-    dkim_pubkey_hash = "0x" + "0" * 64  # Placeholder
+    dkim_domain, dkim_selector = extract_dkim_domain_and_selector(eml_content)
+    dkim_pubkey_hash = compute_dkim_pubkey_hash(dkim_domain, dkim_selector)
 
-    # The proof structure that would be submitted to the contract
-    proof = {
+    public_signals = [recipient_hash, dkim_pubkey_hash, content_hash]
+
+    prover_cmd = os.environ.get("FAREWELL_PROVER_CMD", "").strip()
+    if prover_cmd:
+        external = run_external_prover(
+            prover_cmd, eml_content, recipient_normalized, content_hash, public_signals
+        )
+        return {
+            "pA": external["pA"],
+            "pB": external["pB"],
+            "pC": external["pC"],
+            "publicSignals": external.get("publicSignals", public_signals),
+        }
+
+    # Placeholder Groth16 points — will NOT satisfy any deployed verifier.
+    # The CLI surfaces a warning banner when we fall into this branch.
+    return {
         "pA": ["0x0", "0x0"],
         "pB": [["0x0", "0x0"], ["0x0", "0x0"]],
         "pC": ["0x0", "0x0"],
-        "publicSignals": [
-            recipient_hash,      # [0] recipient email hash
-            dkim_pubkey_hash,    # [1] DKIM pubkey hash
-            content_hash         # [2] content hash (from on-chain payloadContentHash)
-        ]
+        "publicSignals": public_signals,
     }
-
-    return proof
 
 
 def build_delivery_proof(
@@ -1077,7 +1232,29 @@ This tool will help you:
 
         # Generate per-recipient proof
         print_info("Generating proof...")
-        proof = generate_proof_data(raw_msg, recipient, msg_info['content_hash'])
+        dkim_domain, dkim_selector = extract_dkim_domain_and_selector(raw_msg)
+        if dkim_domain:
+            print_info(f"DKIM: domain={dkim_domain} selector={dkim_selector or '?'}")
+        else:
+            print_error("DKIM-Signature header missing — publicSignals[1] will be zero.")
+        try:
+            proof = generate_proof_data(raw_msg, recipient, msg_info['content_hash'])
+        except RuntimeError as e:
+            print_error(f"Proof generation failed: {e}")
+            results.append({"recipient": recipient, "success": False, "error": str(e)})
+            continue
+
+        prover_cmd = os.environ.get("FAREWELL_PROVER_CMD", "").strip()
+        if not prover_cmd:
+            # Placeholder Groth16 points — flagged loudly so the user knows.
+            print_warning(
+                "Groth16 proof is a placeholder (pA/pB/pC = 0). "
+                "Set FAREWELL_PROVER_CMD to a real prover (e.g. a snarkjs "
+                "wrapper) to produce a proof that the on-chain verifier will "
+                "accept. See docs/proof-structure.md for the expected "
+                "circuit signals."
+            )
+
         recipient_proofs.append({
             "recipientIndex": i - 1,
             "proof": proof,

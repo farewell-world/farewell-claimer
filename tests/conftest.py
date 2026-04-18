@@ -101,6 +101,27 @@ This message was sent via Farewell Protocol (https://farewell.world)
 
 
 @pytest.fixture
+def gmail_dkim_eml_content():
+    """.eml with a realistic folded Gmail DKIM-Signature header."""
+    return (
+        "From: Test Sender <sender@example.com>\r\n"
+        "To: alice@example.com\r\n"
+        "Subject: Farewell Message Delivery\r\n"
+        "Date: Thu, 18 Apr 2026 11:28:00 +0000\r\n"
+        "DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;\r\n"
+        " \td=gmail.com; s=20230601; t=1700000000;\r\n"
+        " \tbh=abcdef0123456789abcdef0123456789abcdef0123456789abcdef=;\r\n"
+        " \th=From:To:Subject:Date;\r\n"
+        " \tb=deadbeefcafebabe==\r\n"
+        "Message-ID: <dkim-sample@example.com>\r\n"
+        "MIME-Version: 1.0\r\n"
+        "Content-Type: text/plain; charset=\"utf-8\"\r\n"
+        "\r\n"
+        "Body with Farewell-Hash: 0x1111111111111111111111111111111111111111111111111111111111111111\r\n"
+    )
+
+
+@pytest.fixture
 def temp_output_dir(tmp_path):
     """Create a temporary output directory."""
     output_dir = tmp_path / "proofs"

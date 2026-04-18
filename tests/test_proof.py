@@ -2,15 +2,24 @@
 Tests for proof generation functionality.
 """
 
-import pytest
 import json
+import os
+import sys
 from pathlib import Path
+from unittest.mock import patch
+
+import pytest
 
 import farewell_claimer
 from farewell_claimer import (
-    generate_proof_data,
-    save_proof,
+    KNOWN_DKIM_PUBKEY_HASHES,
+    ZERO_HASH_HEX,
     build_delivery_proof,
+    compute_dkim_pubkey_hash,
+    extract_dkim_domain_and_selector,
+    generate_proof_data,
+    keccak256_hex,
+    save_proof,
     validate_delivery_proof,
 )
 
@@ -410,3 +419,137 @@ class TestProofIntegration:
         for i, r in enumerate(loaded["recipients"]):
             assert r["recipientIndex"] == i
             assert r["proof"]["publicSignals"][2] == content_hash
+
+
+class TestKeccak256Hashing:
+    """publicSignals[0] must match the on-chain recipientEmailHashes commitment.
+
+    The site computes this as ``ethers.keccak256(toUtf8Bytes(email.toLowerCase().trim()))``
+    — see packages/site/lib/delivery/zkemail.ts:computeEmailHash. The test
+    vectors here are synthetic (alice@example.com) but pin the byte-for-byte
+    keccak256 output so any accidental switch back to SHA3-256 (the earlier
+    placeholder) immediately fails.
+    """
+
+    # Precomputed via ``eth_utils.keccak(b"alice@example.com")``. This is the
+    # well-known canonical test email from RFC 2606; no real person's data.
+    ALICE_KECCAK = "0x75a90bbc4dd359da9253ea49138b05a4e37a5a4b4c8e4d66e7d39623523073fa"
+
+    def test_produces_expected_keccak_vector(self):
+        assert keccak256_hex(b"alice@example.com") == self.ALICE_KECCAK
+
+    def test_normalization_matches_site(self):
+        """Upper-cased / padded input hashes the same after .lower().strip().
+
+        Proves the claimer's normalization path lines up with the site's
+        identical normalization in computeEmailHash.
+        """
+        normalized = "  ALICE@Example.COM  ".lower().strip()
+        assert keccak256_hex(normalized.encode()) == self.ALICE_KECCAK
+
+    def test_generate_proof_signals_0_is_keccak_not_sha3(self, sample_eml_content):
+        """Regression guard against the prior SHA3-256 placeholder.
+
+        If someone re-introduces hashlib.sha3_256(email).hexdigest() here,
+        the claimer's publicSignals[0] diverges from the site's keccak256
+        and every on-chain proveDelivery call reverts with InvalidProof or
+        InvalidIndex. This test pins the implementation to keccak256.
+        """
+        proof = generate_proof_data(
+            eml_content=sample_eml_content,
+            recipient_email="alice@example.com",
+            content_hash="0xdead",
+        )
+        assert proof["publicSignals"][0] == self.ALICE_KECCAK
+
+
+class TestDkimExtraction:
+    """The DKIM-Signature header drives publicSignals[1]."""
+
+    def test_extracts_domain_and_selector_from_folded_header(self, gmail_dkim_eml_content):
+        domain, selector = extract_dkim_domain_and_selector(gmail_dkim_eml_content)
+        assert domain == "gmail.com"
+        assert selector == "20230601"
+
+    def test_missing_dkim_returns_none(self, sample_eml_content):
+        """.eml without a DKIM-Signature header yields (None, None), not an error."""
+        domain, selector = extract_dkim_domain_and_selector(sample_eml_content)
+        assert domain is None
+        assert selector is None
+
+    def test_pubkey_hash_matches_site_map_for_gmail(self):
+        """Known provider → exact hash from the site's shared map."""
+        got = compute_dkim_pubkey_hash("gmail.com", "20230601")
+        assert got == KNOWN_DKIM_PUBKEY_HASHES["gmail.com"]
+
+    def test_pubkey_hash_fallback_to_keccak_for_unknown_provider(self):
+        """Unknown domain → keccak256('<selector>._domainkey.<domain>') — deterministic."""
+        got = compute_dkim_pubkey_hash("example.org", "s1")
+        expected = keccak256_hex(b"s1._domainkey.example.org")
+        assert got == expected
+        # Must also not be the all-zero fallback, which would fail on-chain.
+        assert got != ZERO_HASH_HEX
+
+    def test_pubkey_hash_zero_when_no_domain(self):
+        """No DKIM data → zero hash, CLI flags the warning separately."""
+        assert compute_dkim_pubkey_hash(None, None) == ZERO_HASH_HEX
+
+    def test_generate_proof_wires_dkim_into_signal_1(self, gmail_dkim_eml_content):
+        """End-to-end: .eml with a gmail.com DKIM header flows through to the
+        hardcoded Gmail placeholder hash in KNOWN_DKIM_PUBKEY_HASHES."""
+        proof = generate_proof_data(
+            eml_content=gmail_dkim_eml_content,
+            recipient_email="alice@example.com",
+            content_hash="0xbeef",
+        )
+        assert proof["publicSignals"][1] == KNOWN_DKIM_PUBKEY_HASHES["gmail.com"]
+
+
+class TestExternalProverHook:
+    """FAREWELL_PROVER_CMD env var shells out to a Groth16 prover."""
+
+    def test_missing_env_var_yields_placeholder_zeros(self, sample_eml_content, monkeypatch):
+        monkeypatch.delenv("FAREWELL_PROVER_CMD", raising=False)
+        proof = generate_proof_data(sample_eml_content, "a@b.com", "0x1234")
+        assert proof["pA"] == ["0x0", "0x0"]
+        assert proof["pB"] == [["0x0", "0x0"], ["0x0", "0x0"]]
+        assert proof["pC"] == ["0x0", "0x0"]
+
+    def test_env_var_command_supplies_proof_points(self, sample_eml_content, monkeypatch, tmp_path):
+        """External prover output is surfaced verbatim into pA/pB/pC.
+
+        The prover script here reads and discards stdin (so the claimer
+        contract is honored) and prints a hardcoded JSON blob — enough to
+        prove the wiring without depending on a real circuit.
+        """
+        fake_output = {
+            "pA": ["0x11", "0x22"],
+            "pB": [["0x33", "0x44"], ["0x55", "0x66"]],
+            "pC": ["0x77", "0x88"],
+        }
+        prover_script = tmp_path / "fake_prover.py"
+        prover_script.write_text(
+            "import json, sys\n"
+            "sys.stdin.read()\n"
+            f"print(json.dumps({fake_output!r}))\n"
+        )
+        monkeypatch.setenv(
+            "FAREWELL_PROVER_CMD", f"{sys.executable} {prover_script}"
+        )
+        proof = generate_proof_data(sample_eml_content, "a@b.com", "0x1234")
+        assert proof["pA"] == fake_output["pA"]
+        assert proof["pB"] == fake_output["pB"]
+        assert proof["pC"] == fake_output["pC"]
+        # publicSignals is still computed locally unless the prover overrides it.
+        assert len(proof["publicSignals"]) == 3
+        assert proof["publicSignals"][2] == "0x1234"
+
+    def test_env_var_command_failure_raises(self, sample_eml_content, monkeypatch):
+        monkeypatch.setenv("FAREWELL_PROVER_CMD", "exit 1")
+        with pytest.raises(RuntimeError, match="external prover exited"):
+            generate_proof_data(sample_eml_content, "a@b.com", "0x1234")
+
+    def test_env_var_command_non_json_output_raises(self, sample_eml_content, monkeypatch):
+        monkeypatch.setenv("FAREWELL_PROVER_CMD", "echo not-json")
+        with pytest.raises(RuntimeError, match="not JSON"):
+            generate_proof_data(sample_eml_content, "a@b.com", "0x1234")

@@ -6,3 +6,10 @@ google-api-python-client>=2.100.0
 
 # AES-GCM decryption for claim packages (optional, needed for encrypted payloads)
 cryptography>=41.0.0
+
+# Ethereum keccak256 for recipient email hash — MUST match the on-chain
+# commitment produced by the Farewell site (ethers.keccak256 semantics).
+# The pycryptodome extra supplies a Keccak backend; without it eth_utils.keccak
+# raises ImportError at call time.
+eth-utils>=2.0.0
+eth-hash[pycryptodome]>=0.5.0

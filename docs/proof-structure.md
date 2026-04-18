@@ -6,7 +6,7 @@ This document explains the complete Farewell delivery proof architecture, includ
 
 The Farewell protocol uses a Groth16 zero-knowledge proof (via the zk-email framework) to prove that:
 1. A claimer actually sent an email to a recipient
-2. The recipient email address matches the on-chain commitment (Poseidon hash)
+2. The recipient email address matches the on-chain commitment (keccak256 placeholder today; Poseidon once the Circom circuit ships)
 3. The message content matches the stored content hash
 
 This eliminates the need for centralized delivery tracking while maintaining privacy.
@@ -19,7 +19,8 @@ This eliminates the need for centralized delivery tracking while maintaining pri
 ├─────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
 │  1. MESSAGE CREATION (Sender on Farewell UI)                            │
-│     └─> Encrypts message → Stores recipients[].emailHash (Poseidon)     │
+│     └─> Encrypts message → Stores recipients[].emailHash (keccak256     │
+│         placeholder; will migrate to Poseidon with the circuit)         │
 │         Stores payloadContentHash = keccak256(decrypted content)        │
 │                                                                          │
 │  2. MESSAGE RELEASE (After grace period, Council votes)                 │
@@ -107,19 +108,32 @@ The claimer does NOT decrypt the message — only the **recipient** can, using t
 The zk-email circuit produces a Groth16 proof with 3 public signals:
 
 ```
-publicSignals[0] = Poseidon(recipient_email_normalized)
-                   Recipients: alice@example.com → Poseidon("alice@example.com")
+publicSignals[0] = Recipient_Email_Hash
+                   Current: keccak256(email_normalized)                    ← placeholder
+                   Future:  Poseidon(email_normalized) from the zk circuit
                    (normalized: lowercased, whitespace stripped)
+                   Must match m.recipientEmailHashes[i] on-chain. The site
+                   computes the same keccak256 when posting the message, so
+                   claimer and site agree on the commitment until the real
+                   Poseidon circuit ships.
 
 publicSignals[1] = DKIM_Key_Hash
-                   SHA3-256(dkim_public_key_from_email_header)
-                   Proves email was signed by a trusted DKIM key
-                   Verified against trusted DKIM registry on-chain
+                   Current: value from shared placeholder map per provider
+                            domain (gmail.com, outlook.com, …), with
+                            keccak256("<selector>._domainkey.<domain>")
+                            fallback for unknown providers. Extracted from
+                            the .eml DKIM-Signature header.
+                   Future:  SHA3-256(dkim_public_key) fetched via DNS and
+                            checked by the circuit.
+                   Verified against the trustedDkimKeys registry on-chain;
+                   the contract owner must seed that registry via
+                   setTrustedDkimKey before proveDelivery accepts it.
 
 publicSignals[2] = Content_Hash
                    keccak256(email_body_content)
-                   Must match claim_package.contentHash
-                   Embedded in email as Farewell-Hash marker
+                   Must match claim_package.contentHash (and on-chain
+                   m.payloadContentHash). Embedded in the email body as
+                   the Farewell-Hash marker.
 ```
 
 ## Contract Verification
@@ -242,36 +256,60 @@ Reward claimable when:
 
 ## Current Status: Proof-of-Concept
 
-**Important:** The current implementation is a proof-of-concept with placeholder values:
+The current implementation ships correct public signals but still emits a
+zero Groth16 proof by default. Each signal's present vs. eventual behavior:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │               CURRENT POC IMPLEMENTATION                     │
 ├──────────────────────────────────────────────────────────────┤
 │                                                              │
-│  ⚠ Groth16 Proof (pA, pB, pC): All zeros (placeholder)    │
-│    When implemented: Real zk-email circuit output          │
+│  ⚠ Groth16 Proof (pA, pB, pC): Zeros unless a prover is    │
+│    wired via the FAREWELL_PROVER_CMD env var (see below).  │
+│    When wired: real zk-email circuit output.               │
 │                                                              │
-│  ⚠ Recipient Hash (publicSignals[0]):                      │
-│    Current: SHA3-256(email_normalized)                     │
-│    When implemented: Poseidon(email_normalized)            │
+│  ✓ Recipient Hash (publicSignals[0]):                      │
+│    keccak256(email_normalized) — matches the site's        │
+│    on-chain commitment today. Will migrate to Poseidon     │
+│    once the Circom circuit is available (both sides        │
+│    flip together to preserve compatibility).               │
 │                                                              │
-│  ⚠ DKIM Key Hash (publicSignals[1]): All zeros (placeholder)
-│    When implemented: SHA3-256(dkim_public_key)             │
+│  ✓ DKIM Key Hash (publicSignals[1]):                       │
+│    Extracted from the .eml DKIM-Signature header and       │
+│    resolved via the shared placeholder map, with a         │
+│    keccak256("<selector>._domainkey.<domain>") fallback.   │
+│    On-chain trustedDkimKeys must be seeded with the same   │
+│    hashes by the contract owner.                           │
 │                                                              │
-│  ✓ Content Hash (publicSignals[2]): Real value             │
-│    Already: keccak256(decrypted_payload)                   │
+│  ✓ Content Hash (publicSignals[2]):                        │
+│    keccak256(decrypted_payload) — already real.            │
 │                                                              │
-│  ⚠ On-Chain Verifier: Not deployed                         │
-│    Contract has placeholder _verifyZkEmailProof()          │
-│    When implemented: Full Groth16 pairing check            │
+│  ⚠ On-Chain Verifier: Not yet deployed on Sepolia.         │
+│    Owner must setZkEmailVerifier(<address>) before         │
+│    proveDelivery stops reverting with VerifierNotConfigured│
+│    (selector 0x637873a6).                                  │
 │                                                              │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-## Integration with zk-email Circuit
+## Plugging in a Real Prover (FAREWELL_PROVER_CMD)
 
-When the real zk-email circuit is integrated:
+The claimer calls `generate_proof_data()` per recipient. When the env var
+`FAREWELL_PROVER_CMD` is set, we shell out to that command and expect it to
+produce the Groth16 points:
+
+- **stdin**: a single line of JSON `{"recipient":…, "contentHash":…, "publicSignals":[…]}`
+  followed by the raw .eml bytes.
+- **stdout**: a JSON object with `pA` (uint256[2]), `pB` (uint256[2][2]), and `pC` (uint256[2]).
+  May optionally override `publicSignals`; if present it's used verbatim.
+- Non-zero exit, malformed JSON, or missing fields raise `RuntimeError` and
+  abort the claim flow — we'd rather stop than ship a proof that will revert.
+
+Example: `FAREWELL_PROVER_CMD="node my-snarkjs-wrapper.js" python farewell_claimer.py …`
+
+## Integration with a real zk-email Circuit
+
+When the Circom circuit ships:
 
 1. **Input (.eml file)**: Full email with headers and MIME body
 2. **Circuit Logic**:
@@ -282,9 +320,9 @@ When the real zk-email circuit is integrated:
    - Extract email body
    - Verify Farewell-Hash marker matches content hash
 3. **Output (Public Signals)**:
-   - publicSignals[0]: Poseidon hash of recipient email
-   - publicSignals[1]: SHA3-256 of DKIM public key
-   - publicSignals[2]: Content hash from Farewell-Hash marker
+   - publicSignals[0]: Poseidon hash of recipient email (replacing the keccak placeholder — site must migrate in lockstep)
+   - publicSignals[1]: SHA3-256 of DKIM public key (replacing the placeholder map)
+   - publicSignals[2]: Content hash from Farewell-Hash marker (unchanged)
 4. **Proof Generation**: Groth16 proof (pA, pB, pC) proving knowledge of the witness
 
 ## Data Flow Through System
