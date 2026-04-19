@@ -74,6 +74,7 @@ proofs/
 *.eml
 *.json
 !pytest.ini
+!tools/package.json
 
 # OS
 .DS_Store
