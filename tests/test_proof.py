@@ -478,31 +478,28 @@ class TestDkimExtraction:
         assert selector is None
 
     def test_pubkey_hash_matches_site_map_for_gmail(self):
-        """Known provider → exact hash from the site's shared map."""
+        """Known (domain, selector) → exact Poseidon hash from the registry."""
         got = compute_dkim_pubkey_hash("gmail.com", "20230601")
-        assert got == KNOWN_DKIM_PUBKEY_HASHES["gmail.com"]
+        assert got == KNOWN_DKIM_PUBKEY_HASHES[("gmail.com", "20230601")]
 
-    def test_pubkey_hash_fallback_to_keccak_for_unknown_provider(self):
-        """Unknown domain → keccak256('<selector>._domainkey.<domain>') — deterministic."""
+    def test_pubkey_hash_zero_for_unknown_provider(self):
+        """Unknown (domain, selector) → zero hash, will fail on-chain check."""
         got = compute_dkim_pubkey_hash("example.org", "s1")
-        expected = keccak256_hex(b"s1._domainkey.example.org")
-        assert got == expected
-        # Must also not be the all-zero fallback, which would fail on-chain.
-        assert got != ZERO_HASH_HEX
+        assert got == ZERO_HASH_HEX
 
     def test_pubkey_hash_zero_when_no_domain(self):
         """No DKIM data → zero hash, CLI flags the warning separately."""
         assert compute_dkim_pubkey_hash(None, None) == ZERO_HASH_HEX
 
     def test_generate_proof_wires_dkim_into_signal_1(self, gmail_dkim_eml_content):
-        """End-to-end: .eml with a gmail.com DKIM header flows through to the
-        hardcoded Gmail placeholder hash in KNOWN_DKIM_PUBKEY_HASHES."""
+        """End-to-end: .eml with a gmail.com/20230601 DKIM header flows through
+        to the registered Poseidon hash in KNOWN_DKIM_PUBKEY_HASHES."""
         proof = generate_proof_data(
             eml_content=gmail_dkim_eml_content,
             recipient_email="alice@example.com",
             content_hash="0xbeef",
         )
-        assert proof["publicSignals"][1] == KNOWN_DKIM_PUBKEY_HASHES["gmail.com"]
+        assert proof["publicSignals"][1] == KNOWN_DKIM_PUBKEY_HASHES[("gmail.com", "20230601")]
 
 
 class TestExternalProverHook:
