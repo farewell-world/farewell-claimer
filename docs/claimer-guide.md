@@ -63,9 +63,13 @@ After claiming, click **Download Claim Package** to get a JSON file. This file c
   "skShare": "0x...",
   "encryptedPayload": "0x...",
   "contentHash": "0x...",
-  "subject": "Farewell Message Delivery"
+  "subject": "Farewell Message Delivery",
+  "owner": "0x...",
+  "senderName": "Alice"
 }
 ```
+
+`senderName` is optional — the display name of the farewell sender. When present, the claimer uses it instead of the raw owner address in instruction messages.
 
 The message is still encrypted — the claim package contains the on-chain key share (`skShare`) but you need the off-chain secret (`s'`) to decrypt it.
 
