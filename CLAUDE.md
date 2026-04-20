@@ -123,9 +123,14 @@ This hash is extracted by the zk-email circuit to verify the message content mat
      "skShare": "...",
      "encryptedPayload": "0x...",
      "contentHash": "0x...",
-     "subject": "Farewell Message Delivery"
+     "subject": "Farewell Message Delivery",
+     "owner": "0x...",
+     "senderName": "Alice"
    }
    ```
+   `senderName` is optional — the display name of the farewell sender. When present,
+   the claimer uses it instead of the raw owner address in instruction messages.
+
    The claimer extracts recipients, contentHash, and subject. The email body
    directs recipients to decrypt the message at https://farewell.world/decrypt/
    or with the farewell-decrypter CLI tool.

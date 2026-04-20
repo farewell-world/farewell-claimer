@@ -106,9 +106,13 @@ The tool supports two input formats:
   "skShare": "0x...",
   "encryptedPayload": "0x...",
   "contentHash": "0x1234...",
-  "subject": "Farewell Message Delivery"
+  "subject": "Farewell Message Delivery",
+  "owner": "0x...",
+  "senderName": "Alice"
 }
 ```
+
+`senderName` is optional — the display name of the farewell sender. When present, the claimer uses it instead of the raw owner address in instruction messages.
 
 **Direct format** (pre-decrypted message, for manual use):
 
