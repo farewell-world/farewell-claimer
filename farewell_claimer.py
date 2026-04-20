@@ -970,6 +970,8 @@ def _load_claim_package(data: Dict, filepath: str) -> Optional[Dict]:
         content_hash = '0x' + content_hash
 
     owner = data.get('owner', 'someone')
+    sender_name = data.get('senderName', '')
+    display_owner = sender_name or owner
     crypto_scheme = data.get('cryptoScheme', '')
     passphrase_hint = data.get('passphraseHint', '')
 
@@ -977,18 +979,18 @@ def _load_claim_package(data: Dict, filepath: str) -> Optional[Dict]:
     if crypto_scheme and ';' in crypto_scheme:
         # Passphrase mode (e.g., "AES-128-GCM;SHAKE128")
         secret_instructions = (
-            f"  2. The passphrase that {owner} shared with you\n"
+            f"  2. The passphrase that {display_owner} shared with you\n"
         )
         if passphrase_hint:
             secret_instructions += f"\n  Hint for your passphrase: {passphrase_hint}\n"
     else:
         # Raw hex mode (e.g., "AES-128-GCM" or empty)
         secret_instructions = (
-            f"  2. The off-chain secret (s') that {owner} shared with you\n"
+            f"  2. The off-chain secret (s') that {display_owner} shared with you\n"
         )
 
     message = (
-        f"You have received a Farewell message from {owner}.\n"
+        f"You have received a Farewell message from {display_owner}.\n"
         f"\n"
         f"To read the message, you will need:\n"
         f"  1. The claim package JSON file (attached or shared separately)\n"
@@ -1009,6 +1011,7 @@ def _load_claim_package(data: Dict, filepath: str) -> Optional[Dict]:
         "claim_package_filename": Path(filepath).name,
         "crypto_scheme": crypto_scheme,
         "passphrase_hint": passphrase_hint,
+        "sender_name": sender_name,
     }
 
     print_success(f"Loaded claim package from: {filepath}")
