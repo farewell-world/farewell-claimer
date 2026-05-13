@@ -302,6 +302,12 @@ BSD 3-Clause License - see [LICENSE](LICENSE) for details.
 - [Farewell Protocol](https://farewell.world) - Main application
 - [Farewell Core](https://github.com/farewell-world/farewell-core) - Smart contracts
 
+## Support the Project
+
+If you find Farewell interesting or useful, consider sending a donation on Ethereum or any EVM-compatible chain:
+
+**`0x10fcc6f07a84bBaCd26e2827122be09830243da5`**
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
