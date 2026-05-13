@@ -17,6 +17,7 @@ from farewell_claimer import (
     build_delivery_proof,
     compute_dkim_pubkey_hash,
     extract_dkim_domain_and_selector,
+    find_farewell_hash_marker,
     generate_proof_data,
     keccak256_hex,
     save_proof,
@@ -501,6 +502,52 @@ class TestDkimExtraction:
         )
         assert proof["publicSignals"][1] == KNOWN_DKIM_PUBKEY_HASHES[("gmail.com", "20230601")]
 
+    def test_unusual_whitespace_in_dkim_header(self):
+        """Tabs and extra spaces between DKIM tag values are handled."""
+        eml = (
+            "From: x@y.com\r\n"
+            "To: z@w.com\r\n"
+            "DKIM-Signature: v=1;\ta=rsa-sha256;\t c=relaxed/relaxed;\r\n"
+            "\t  d=outlook.com  ;\r\n"
+            " \t s=selector1  ;  t=1700000000;\r\n"
+            "\tbh=abc123=;\r\n"
+            "\tb=deadbeef==\r\n"
+            "Content-Type: text/plain\r\n"
+            "\r\n"
+            "body\r\n"
+        )
+        domain, selector = extract_dkim_domain_and_selector(eml)
+        assert domain == "outlook.com"
+        assert selector == "selector1"
+
+    def test_missing_d_field(self):
+        """DKIM-Signature without d= returns None for domain."""
+        eml = (
+            "From: x@y.com\r\n"
+            "DKIM-Signature: v=1; a=rsa-sha256; s=sel1;\r\n"
+            "\tb=deadbeef==\r\n"
+            "Content-Type: text/plain\r\n"
+            "\r\n"
+            "body\r\n"
+        )
+        domain, selector = extract_dkim_domain_and_selector(eml)
+        assert domain is None
+        assert selector == "sel1"
+
+    def test_missing_s_field(self):
+        """DKIM-Signature without s= returns None for selector."""
+        eml = (
+            "From: x@y.com\r\n"
+            "DKIM-Signature: v=1; a=rsa-sha256; d=example.com;\r\n"
+            "\tb=deadbeef==\r\n"
+            "Content-Type: text/plain\r\n"
+            "\r\n"
+            "body\r\n"
+        )
+        domain, selector = extract_dkim_domain_and_selector(eml)
+        assert domain == "example.com"
+        assert selector is None
+
 
 class TestExternalProverHook:
     """FAREWELL_PROVER_CMD env var shells out to a Groth16 prover."""
@@ -550,3 +597,67 @@ class TestExternalProverHook:
         monkeypatch.setenv("FAREWELL_PROVER_CMD", "echo not-json")
         with pytest.raises(RuntimeError, match="not JSON"):
             generate_proof_data(sample_eml_content, "a@b.com", "0x1234")
+
+
+class TestFindFarewellHashMarker:
+    """Tests for find_farewell_hash_marker — locating the hash in email body."""
+
+    def test_multipart_email_hash_in_second_part(self):
+        """Hash marker in the second MIME part is found correctly."""
+        eml = (
+            "From: a@b.com\r\n"
+            "To: c@d.com\r\n"
+            "MIME-Version: 1.0\r\n"
+            "Content-Type: multipart/alternative; boundary=\"sep\"\r\n"
+            "\r\n"
+            "--sep\r\n"
+            "Content-Type: text/html; charset=\"utf-8\"\r\n"
+            "\r\n"
+            "<p>No marker here</p>\r\n"
+            "--sep\r\n"
+            "Content-Type: text/plain; charset=\"utf-8\"\r\n"
+            "\r\n"
+            "Hello!\r\n"
+            "Farewell-Hash: 0xdeadbeef\r\n"
+            "--sep--\r\n"
+        )
+        idx = find_farewell_hash_marker(eml)
+        assert idx >= 0
+        # The returned offset should point to the start of the marker in the
+        # decoded text/plain body.
+        body = "Hello!\r\nFarewell-Hash: 0xdeadbeef\r\n"
+        assert body.find("Farewell-Hash: 0x") == idx
+
+    def test_single_part_email_with_hash(self):
+        """Single-part (non-multipart) email with the hash marker."""
+        eml = (
+            "From: a@b.com\r\n"
+            "To: c@d.com\r\n"
+            "Content-Type: text/plain; charset=\"utf-8\"\r\n"
+            "\r\n"
+            "Some preamble text.\r\n"
+            "Farewell-Hash: 0xabcdef0123456789\r\n"
+        )
+        idx = find_farewell_hash_marker(eml)
+        assert idx >= 0
+
+    def test_missing_hash_returns_negative_one(self):
+        """Email with no Farewell-Hash marker returns -1."""
+        eml = (
+            "From: a@b.com\r\n"
+            "To: c@d.com\r\n"
+            "Content-Type: text/plain; charset=\"utf-8\"\r\n"
+            "\r\n"
+            "Just a normal email body, nothing special.\r\n"
+        )
+        assert find_farewell_hash_marker(eml) == -1
+
+    def test_empty_body_returns_negative_one(self):
+        """Email with an empty body returns -1."""
+        eml = (
+            "From: a@b.com\r\n"
+            "To: c@d.com\r\n"
+            "Content-Type: text/plain; charset=\"utf-8\"\r\n"
+            "\r\n"
+        )
+        assert find_farewell_hash_marker(eml) == -1

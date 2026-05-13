@@ -107,7 +107,7 @@ The claimer does NOT decrypt the message -- only the **recipient** can, using th
 
 The Groth16 circuit (`circuits/farewell_delivery.circom`) wraps `@zk-email/circuits::EmailVerifier` with Farewell-specific signal extraction:
 
-**Parameters:** `maxHeadersLength=1024, maxBodyLength=1024, maxRecipientBytes=256, n=121, k=17`
+**Parameters:** `maxHeadersLength=1024, maxBodyLength=1024, maxRecipientBytes=256, n=121, k=17, markerLen=17`
 
 **Public Outputs:**
 
@@ -115,9 +115,9 @@ The Groth16 circuit (`circuits/farewell_delivery.circom`) wraps `@zk-email/circu
 |-------|--------|-------------|----------------|
 | `[0]` | `recipientHash` | `PoseidonModular(PackBytes(recipient_email_bytes))` | `== m.recipientEmailHashes[i]` |
 | `[1]` | `dkimKeyHash` | `PoseidonLarge(121,17)(rsa_pubkey_chunks)` -- native `@zk-email` pubkeyHash | `_isTrustedDkimKey(pubkeyHash)` |
-| `[2]` | `contentHash` | Private input passed through (v1) | `== m.payloadContentHash` |
+| `[2]` | `contentHash` | Decoded from `Farewell-Hash: 0x<64 hex>` in DKIM-signed body | `== m.payloadContentHash` |
 
-**v1 Security Note:** `contentHash` is a pass-through -- the circuit does not assert it appears in the email body. V2 will bind it via an in-circuit ASCII-hex-decode of the `Farewell-Hash` marker.
+**Content Hash Body Binding:** The circuit extracts the marker `Farewell-Hash: 0x` (17 bytes) from the DKIM-signed email body at a prover-supplied offset (`contentHashMarkerStart`), ASCII-hex-decodes the following 64 lowercase hex characters into a 256-bit value, and constrains it to equal the private `contentHashIn` input.
 
 ## Contract Verification
 
@@ -237,8 +237,10 @@ The claimer calls `generate_proof_data()` per recipient. When the env var
 `FAREWELL_PROVER_CMD` is set, we shell out to that command and expect it to
 produce the full Groth16 proof:
 
-- **stdin**: a single line of JSON `{"recipient":..., "contentHash":..., "publicSignals":[...]}`
-  followed by the raw .eml bytes.
+- **stdin**: a single line of JSON `{"recipient":..., "contentHash":..., "contentHashMarkerStart":..., "publicSignals":[...]}`
+  followed by the raw .eml bytes. `contentHashMarkerStart` is the byte offset of
+  `Farewell-Hash: 0x` in the raw body; the prover may need to adjust for DKIM
+  canonicalization and SHA precompute split.
 - **stdout**: a JSON object with `pA` (uint256[2]), `pB` (uint256[2][2]), `pC` (uint256[2]),
   and `publicSignals` (the 3 circuit outputs as hex strings).
 - Non-zero exit, malformed JSON, or missing fields raise `RuntimeError` and
@@ -269,8 +271,7 @@ or downloaded from the GitHub Release).
 - DKIM public key is in the trusted registry (authentic provider)
 - Groth16 proof is valid (circuit constraints satisfied)
 
-**Not Proven (v1):**
-- Content hash is not bound to the email body (pass-through only)
+**Not Proven:**
 - Recipient may not have read or understood the message
 - No coercion or fraud in message creation
 - No key material compromise during transit
