@@ -2,13 +2,20 @@
 Tests for email creation and sending functionality.
 """
 
+import json
 import pytest
 from unittest.mock import MagicMock, patch
 from email.mime.multipart import MIMEMultipart
 import smtplib
 
 import farewell_claimer
-from farewell_claimer import create_farewell_email, send_email, save_eml
+from farewell_claimer import (
+    create_farewell_email,
+    send_email,
+    save_eml,
+    _load_claim_package,
+    load_message_from_file,
+)
 
 
 class TestCreateFarewellEmail:
@@ -243,3 +250,166 @@ class TestSaveEml:
             content = f.read()
         assert "Ñoño" in content
         assert "你好" in content
+
+
+class TestLoadClaimPackage:
+    """Tests for _load_claim_package and load_message_from_file."""
+
+    def _valid_claim_data(self):
+        """Helper: build a minimal valid claim package dict."""
+        return {
+            "type": "farewell-claim-package",
+            "recipients": ["alice@example.com", "bob@example.com"],
+            "skShare": "0xdeadbeef",
+            "encryptedPayload": "0xaabbccdd",
+            "contentHash": "0x" + "ab" * 32,
+            "subject": "Farewell from Alice",
+            "owner": "0x1234",
+        }
+
+    def test_load_valid_claim_package(self):
+        """Valid claim package is parsed with correct fields."""
+        data = self._valid_claim_data()
+        result = _load_claim_package(data, "/fake/path/claim.json")
+
+        assert result is not None
+        assert result["recipients"] == ["alice@example.com", "bob@example.com"]
+        assert result["content_hash"] == "0x" + "ab" * 32
+        assert result["subject"] == "Farewell from Alice"
+        assert result["owner"] == "0x1234"
+        assert "claim_package_json" in result
+
+    def test_missing_recipients_returns_none(self):
+        """Claim package without 'recipients' is rejected."""
+        data = self._valid_claim_data()
+        del data["recipients"]
+        result = _load_claim_package(data, "/fake/path.json")
+        assert result is None
+
+    def test_missing_content_hash_returns_none(self):
+        """Claim package without 'contentHash' is rejected."""
+        data = self._valid_claim_data()
+        del data["contentHash"]
+        result = _load_claim_package(data, "/fake/path.json")
+        assert result is None
+
+    def test_sender_name_override(self):
+        """senderName appears in the generated instruction message."""
+        data = self._valid_claim_data()
+        data["senderName"] = "Alice Wonderland"
+        result = _load_claim_package(data, "/fake/path.json")
+
+        assert result is not None
+        assert result["sender_name"] == "Alice Wonderland"
+        # The instruction message should mention the sender name
+        assert "Alice Wonderland" in result["message"]
+
+    def test_sender_name_absent_uses_owner(self):
+        """When senderName is missing, the owner address is used in the message."""
+        data = self._valid_claim_data()
+        # No senderName key
+        result = _load_claim_package(data, "/fake/path.json")
+
+        assert result is not None
+        assert result["sender_name"] == ""
+        assert "0x1234" in result["message"]
+
+    def test_passphrase_mode(self):
+        """cryptoScheme with semicolon triggers passphrase instructions."""
+        data = self._valid_claim_data()
+        data["cryptoScheme"] = "AES-128-GCM;SHAKE128"
+        data["passphraseHint"] = "Your favorite pet's name"
+        result = _load_claim_package(data, "/fake/path.json")
+
+        assert result is not None
+        assert result["crypto_scheme"] == "AES-128-GCM;SHAKE128"
+        assert result["passphrase_hint"] == "Your favorite pet's name"
+        # The passphrase hint should appear in the message
+        assert "passphrase" in result["message"].lower()
+        assert "Your favorite pet's name" in result["message"]
+
+    def test_raw_hex_mode(self):
+        """Default crypto scheme (no semicolon) uses s' wording."""
+        data = self._valid_claim_data()
+        result = _load_claim_package(data, "/fake/path.json")
+
+        assert result is not None
+        assert "off-chain secret" in result["message"]
+
+    def test_comma_separated_recipients_string(self):
+        """Recipients given as a comma-separated string are split into a list."""
+        data = self._valid_claim_data()
+        data["recipients"] = "alice@example.com, bob@example.com, carol@example.com"
+        result = _load_claim_package(data, "/fake/path.json")
+
+        assert result is not None
+        assert result["recipients"] == [
+            "alice@example.com",
+            "bob@example.com",
+            "carol@example.com",
+        ]
+
+    def test_content_hash_without_0x_prefix(self):
+        """contentHash without 0x prefix gets it added automatically."""
+        data = self._valid_claim_data()
+        data["contentHash"] = "ab" * 32  # no 0x prefix
+        result = _load_claim_package(data, "/fake/path.json")
+
+        assert result is not None
+        assert result["content_hash"] == "0x" + "ab" * 32
+
+    def test_load_message_from_file_claim_package(self, tmp_path):
+        """load_message_from_file correctly dispatches to _load_claim_package."""
+        data = self._valid_claim_data()
+        filepath = tmp_path / "test_claim.json"
+        filepath.write_text(json.dumps(data))
+
+        result = load_message_from_file(str(filepath))
+
+        assert result is not None
+        assert result["recipients"] == ["alice@example.com", "bob@example.com"]
+        assert result["content_hash"].startswith("0x")
+
+    def test_load_message_from_file_direct_format(self, tmp_path):
+        """load_message_from_file handles the direct (pre-decrypted) format."""
+        data = {
+            "recipients": ["user@example.com"],
+            "contentHash": "0x" + "ff" * 32,
+            "message": "Goodbye, friend.",
+            "subject": "A Farewell",
+        }
+        filepath = tmp_path / "direct.json"
+        filepath.write_text(json.dumps(data))
+
+        result = load_message_from_file(str(filepath))
+
+        assert result is not None
+        assert result["recipients"] == ["user@example.com"]
+        assert result["message"] == "Goodbye, friend."
+        assert result["subject"] == "A Farewell"
+
+    def test_load_message_from_file_not_found(self):
+        """Non-existent file returns None."""
+        result = load_message_from_file("/nonexistent/path/nope.json")
+        assert result is None
+
+    def test_load_message_from_file_invalid_json(self, tmp_path):
+        """Malformed JSON returns None."""
+        filepath = tmp_path / "bad.json"
+        filepath.write_text("{ this is not json }")
+
+        result = load_message_from_file(str(filepath))
+        assert result is None
+
+    def test_load_message_direct_missing_message_field(self, tmp_path):
+        """Direct format without 'message' field returns None."""
+        data = {
+            "recipients": ["user@example.com"],
+            "contentHash": "0x" + "ff" * 32,
+            # no "message" key
+        }
+        filepath = tmp_path / "no_msg.json"
+        filepath.write_text(json.dumps(data))
+
+        result = load_message_from_file(str(filepath))
+        assert result is None

@@ -709,6 +709,33 @@ def compute_dkim_pubkey_hash(domain: Optional[str], selector: Optional[str]) -> 
     return ZERO_HASH_HEX
 
 
+def find_farewell_hash_marker(eml_content: str) -> int:
+    """Find the byte offset of 'Farewell-Hash: 0x' in the email body.
+
+    Returns the offset in the raw body text, or -1 if not found. The external
+    prover may need to adjust this for DKIM canonicalization and SHA precompute
+    split offset.
+    """
+    import email
+    msg = email.message_from_string(eml_content)
+    body = ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            if part.get_content_type() == 'text/plain':
+                payload = part.get_payload(decode=True)
+                if payload:
+                    body = payload.decode('utf-8', errors='replace')
+                    break
+    else:
+        payload = msg.get_payload(decode=True)
+        if payload:
+            body = payload.decode('utf-8', errors='replace')
+
+    marker = "Farewell-Hash: 0x"
+    idx = body.find(marker)
+    return idx
+
+
 def run_external_prover(
     prover_cmd: str,
     eml_content: str,
@@ -727,9 +754,12 @@ def run_external_prover(
     """
     import subprocess
 
+    marker_start = find_farewell_hash_marker(eml_content)
+
     payload = {
         "recipient": recipient_email,
         "contentHash": content_hash,
+        "contentHashMarkerStart": marker_start,
         "publicSignals": public_signals,
     }
     try:
