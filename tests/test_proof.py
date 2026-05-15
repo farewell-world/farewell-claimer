@@ -28,12 +28,15 @@ from farewell_claimer import (
 class TestGenerateProofData:
     """Tests for proof data generation."""
 
+    SENDER = "0xabc"
+
     def test_generate_proof_returns_dict(self, sample_eml_content):
         """Test that generate_proof_data returns a dictionary."""
         proof = generate_proof_data(
             eml_content=sample_eml_content,
             recipient_email="recipient@test.com",
-            content_hash="0x1234567890abcdef"
+            content_hash="0x1234567890abcdef",
+            sender_address=self.SENDER,
         )
         assert isinstance(proof, dict)
 
@@ -42,7 +45,8 @@ class TestGenerateProofData:
         proof = generate_proof_data(
             eml_content=sample_eml_content,
             recipient_email="recipient@test.com",
-            content_hash="0x1234567890abcdef"
+            content_hash="0x1234567890abcdef",
+            sender_address=self.SENDER,
         )
 
         assert "pA" in proof
@@ -55,7 +59,8 @@ class TestGenerateProofData:
         proof = generate_proof_data(
             eml_content=sample_eml_content,
             recipient_email="recipient@test.com",
-            content_hash="0x1234"
+            content_hash="0x1234",
+            sender_address=self.SENDER,
         )
 
         assert isinstance(proof["pA"], list)
@@ -66,7 +71,8 @@ class TestGenerateProofData:
         proof = generate_proof_data(
             eml_content=sample_eml_content,
             recipient_email="recipient@test.com",
-            content_hash="0x1234"
+            content_hash="0x1234",
+            sender_address=self.SENDER,
         )
 
         assert isinstance(proof["pB"], list)
@@ -79,7 +85,8 @@ class TestGenerateProofData:
         proof = generate_proof_data(
             eml_content=sample_eml_content,
             recipient_email="recipient@test.com",
-            content_hash="0x1234"
+            content_hash="0x1234",
+            sender_address=self.SENDER,
         )
 
         assert isinstance(proof["pC"], list)
@@ -91,59 +98,41 @@ class TestGenerateProofData:
         proof = generate_proof_data(
             eml_content=sample_eml_content,
             recipient_email="recipient@test.com",
-            content_hash=content_hash
+            content_hash=content_hash,
+            sender_address=self.SENDER,
         )
 
         signals = proof["publicSignals"]
         assert isinstance(signals, list)
         assert len(signals) == 3
-        # [0] = recipient email hash
+        # [0] = recipient email hash (placeholder in standalone mode)
         # [1] = DKIM pubkey hash
         # [2] = content hash
         assert signals[2] == content_hash
 
     def test_generate_proof_recipient_hash_is_hex(self, sample_eml_content):
-        """Test recipient hash is a valid hex string."""
+        """Test recipient hash is a valid hex string (placeholder zero in standalone mode)."""
         proof = generate_proof_data(
             eml_content=sample_eml_content,
             recipient_email="recipient@test.com",
-            content_hash="0x1234"
+            content_hash="0x1234",
+            sender_address=self.SENDER,
         )
 
         recipient_hash = proof["publicSignals"][0]
         assert recipient_hash.startswith("0x")
         assert len(recipient_hash) == 66  # 0x + 64 hex chars
 
-    def test_generate_proof_normalizes_email(self, sample_eml_content):
-        """Test that email is normalized (lowercase, stripped)."""
-        proof1 = generate_proof_data(
+    def test_generate_proof_standalone_uses_placeholder_hash(self, sample_eml_content):
+        """Standalone mode uses a zero placeholder for the recipient hash
+        because the real Poseidon hash requires the circuit/external prover."""
+        proof = generate_proof_data(
             eml_content=sample_eml_content,
-            recipient_email="Test@Example.COM  ",
-            content_hash="0x1234"
+            recipient_email="recipient@test.com",
+            content_hash="0x1234",
+            sender_address=self.SENDER,
         )
-        proof2 = generate_proof_data(
-            eml_content=sample_eml_content,
-            recipient_email="test@example.com",
-            content_hash="0x1234"
-        )
-
-        # Same normalized email should produce same hash
-        assert proof1["publicSignals"][0] == proof2["publicSignals"][0]
-
-    def test_generate_proof_different_emails_different_hash(self, sample_eml_content):
-        """Test that different emails produce different hashes."""
-        proof1 = generate_proof_data(
-            eml_content=sample_eml_content,
-            recipient_email="user1@test.com",
-            content_hash="0x1234"
-        )
-        proof2 = generate_proof_data(
-            eml_content=sample_eml_content,
-            recipient_email="user2@test.com",
-            content_hash="0x1234"
-        )
-
-        assert proof1["publicSignals"][0] != proof2["publicSignals"][0]
+        assert proof["publicSignals"][0] == "0x" + "00" * 32
 
 
 class TestSaveProof:
@@ -206,7 +195,7 @@ class TestBuildDeliveryProof:
 
     def test_build_delivery_proof_structure(self, sample_eml_content):
         """Built proof has correct top-level structure."""
-        proof = generate_proof_data(sample_eml_content, "a@b.com", "0x1234")
+        proof = generate_proof_data(sample_eml_content, "a@b.com", "0x1234", "0xabc")
         dp = build_delivery_proof(
             owner="0xabc",
             message_index=3,
@@ -223,14 +212,14 @@ class TestBuildDeliveryProof:
         """Multi-recipient proofs are all included."""
         entries = []
         for i, email in enumerate(["a@b.com", "c@d.com", "e@f.com"]):
-            proof = generate_proof_data(sample_eml_content, email, "0xaabb")
+            proof = generate_proof_data(sample_eml_content, email, "0xaabb", "0xabc")
             entries.append({"recipientIndex": i, "proof": proof, "email": email})
 
         dp = build_delivery_proof("0x1", 0, entries)
         assert len(dp["recipients"]) == 3
-        # Each recipient has distinct email hash
-        hashes = [r["proof"]["publicSignals"][0] for r in dp["recipients"]]
-        assert len(set(hashes)) == 3
+        # In standalone mode all recipient hashes are the same placeholder;
+        # the external prover produces distinct salted Poseidon hashes.
+        assert len(dp["recipients"]) == 3
 
 
 class TestValidateDeliveryProof:
@@ -358,7 +347,7 @@ class TestValidateDeliveryProof:
     def test_content_hash_passthrough(self, sample_eml_content):
         """Content hash from claim package appears in publicSignals[2]."""
         content_hash = "0x" + "ff" * 32
-        proof = generate_proof_data(sample_eml_content, "a@b.com", content_hash)
+        proof = generate_proof_data(sample_eml_content, "a@b.com", content_hash, "0xabc")
         dp = build_delivery_proof("0x1", 0, [
             {"recipientIndex": 0, "proof": proof, "email": "a@b.com"}
         ])
@@ -376,7 +365,7 @@ class TestProofIntegration:
         content_hash = "0x" + "ab" * 32
 
         # Generate proof
-        proof = generate_proof_data(sample_eml_content, recipient, content_hash)
+        proof = generate_proof_data(sample_eml_content, recipient, content_hash, "0xDEAD")
 
         # Save proof
         filepath = save_proof(proof, "integration_test.json", temp_output_dir)
@@ -398,7 +387,7 @@ class TestProofIntegration:
         # Generate per-recipient proofs
         entries = []
         for i, email in enumerate(recipients):
-            proof = generate_proof_data(sample_eml_content, email, content_hash)
+            proof = generate_proof_data(sample_eml_content, email, content_hash, "0xDEAD")
             entries.append({"recipientIndex": i, "proof": proof, "email": email})
 
         # Build envelope
@@ -423,13 +412,12 @@ class TestProofIntegration:
 
 
 class TestKeccak256Hashing:
-    """publicSignals[0] must match the on-chain recipientEmailHashes commitment.
+    """keccak256_hex utility tests.
 
-    The site computes this as ``ethers.keccak256(toUtf8Bytes(email.toLowerCase().trim()))``
-    — see packages/site/lib/delivery/zkemail.ts:computeEmailHash. The test
-    vectors here are synthetic (alice@example.com) but pin the byte-for-byte
-    keccak256 output so any accidental switch back to SHA3-256 (the earlier
-    placeholder) immediately fails.
+    The keccak256_hex function is still used elsewhere in the codebase
+    (e.g. content hash verification). The recipient email hash is now a
+    salted Poseidon hash computed by the circuit, so standalone mode uses
+    a zero placeholder for publicSignals[0].
     """
 
     # Precomputed via ``eth_utils.keccak(b"alice@example.com")``. This is the
@@ -448,20 +436,19 @@ class TestKeccak256Hashing:
         normalized = "  ALICE@Example.COM  ".lower().strip()
         assert keccak256_hex(normalized.encode()) == self.ALICE_KECCAK
 
-    def test_generate_proof_signals_0_is_keccak_not_sha3(self, sample_eml_content):
-        """Regression guard against the prior SHA3-256 placeholder.
+    def test_standalone_proof_signals_0_is_placeholder(self, sample_eml_content):
+        """Standalone mode uses a zero placeholder for the recipient hash.
 
-        If someone re-introduces hashlib.sha3_256(email).hexdigest() here,
-        the claimer's publicSignals[0] diverges from the site's keccak256
-        and every on-chain proveDelivery call reverts with InvalidProof or
-        InvalidIndex. This test pins the implementation to keccak256.
+        The real salted Poseidon hash is computed by the external prover
+        circuit (Poseidon(PackBytes(email), senderAddress)).
         """
         proof = generate_proof_data(
             eml_content=sample_eml_content,
             recipient_email="alice@example.com",
             content_hash="0xdead",
+            sender_address="0xabc",
         )
-        assert proof["publicSignals"][0] == self.ALICE_KECCAK
+        assert proof["publicSignals"][0] == "0x" + "00" * 32
 
 
 class TestDkimExtraction:
@@ -499,6 +486,7 @@ class TestDkimExtraction:
             eml_content=gmail_dkim_eml_content,
             recipient_email="alice@example.com",
             content_hash="0xbeef",
+            sender_address="0xabc",
         )
         assert proof["publicSignals"][1] == KNOWN_DKIM_PUBKEY_HASHES[("gmail.com", "20230601")]
 
@@ -554,7 +542,7 @@ class TestExternalProverHook:
 
     def test_missing_env_var_yields_placeholder_zeros(self, sample_eml_content, monkeypatch):
         monkeypatch.delenv("FAREWELL_PROVER_CMD", raising=False)
-        proof = generate_proof_data(sample_eml_content, "a@b.com", "0x1234")
+        proof = generate_proof_data(sample_eml_content, "a@b.com", "0x1234", "0xabc")
         assert proof["pA"] == ["0x0", "0x0"]
         assert proof["pB"] == [["0x0", "0x0"], ["0x0", "0x0"]]
         assert proof["pC"] == ["0x0", "0x0"]
@@ -580,7 +568,7 @@ class TestExternalProverHook:
         monkeypatch.setenv(
             "FAREWELL_PROVER_CMD", f"{sys.executable} {prover_script}"
         )
-        proof = generate_proof_data(sample_eml_content, "a@b.com", "0x1234")
+        proof = generate_proof_data(sample_eml_content, "a@b.com", "0x1234", "0xabc")
         assert proof["pA"] == fake_output["pA"]
         assert proof["pB"] == fake_output["pB"]
         assert proof["pC"] == fake_output["pC"]
@@ -591,12 +579,12 @@ class TestExternalProverHook:
     def test_env_var_command_failure_raises(self, sample_eml_content, monkeypatch):
         monkeypatch.setenv("FAREWELL_PROVER_CMD", "exit 1")
         with pytest.raises(RuntimeError, match="external prover exited"):
-            generate_proof_data(sample_eml_content, "a@b.com", "0x1234")
+            generate_proof_data(sample_eml_content, "a@b.com", "0x1234", "0xabc")
 
     def test_env_var_command_non_json_output_raises(self, sample_eml_content, monkeypatch):
         monkeypatch.setenv("FAREWELL_PROVER_CMD", "echo not-json")
         with pytest.raises(RuntimeError, match="not JSON"):
-            generate_proof_data(sample_eml_content, "a@b.com", "0x1234")
+            generate_proof_data(sample_eml_content, "a@b.com", "0x1234", "0xabc")
 
 
 class TestFindFarewellHashMarker:

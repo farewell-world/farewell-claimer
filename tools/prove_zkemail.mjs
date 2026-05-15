@@ -52,9 +52,9 @@ async function main() {
     fatal("first line is not valid JSON");
   }
 
-  const { recipient, contentHash } = meta;
-  if (!recipient || !contentHash) {
-    fatal("JSON header must contain 'recipient' and 'contentHash'");
+  const { recipient, contentHash, senderAddress } = meta;
+  if (!recipient || !contentHash || !senderAddress) {
+    fatal("JSON header must contain 'recipient', 'contentHash', and 'senderAddress'");
   }
 
   // Dynamically import @zk-email/helpers (ESM)
@@ -106,6 +106,7 @@ async function main() {
     recipientEmailStart: recipientStart.toString(),
     recipientEmailLength: normalizedRecipient.length.toString(),
     contentHashIn: contentHashBigInt.toString(),
+    senderAddress: BigInt(senderAddress).toString(),
   };
 
   // Generate Groth16 proof

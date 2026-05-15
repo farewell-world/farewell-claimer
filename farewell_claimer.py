@@ -741,6 +741,7 @@ def run_external_prover(
     eml_content: str,
     recipient_email: str,
     content_hash: str,
+    sender_address: str,
     public_signals: List[str],
 ) -> Dict:
     """Shell out to a user-supplied Groth16 prover.
@@ -759,6 +760,7 @@ def run_external_prover(
     payload = {
         "recipient": recipient_email,
         "contentHash": content_hash,
+        "senderAddress": sender_address,
         "contentHashMarkerStart": marker_start,
         "publicSignals": public_signals,
     }
@@ -790,12 +792,12 @@ def run_external_prover(
     return result
 
 
-def generate_proof_data(eml_content: str, recipient_email: str, content_hash: str) -> Dict:
+def generate_proof_data(eml_content: str, recipient_email: str, content_hash: str, sender_address: str) -> Dict:
     """Generate the Groth16 delivery proof that Farewell.proveDelivery expects.
 
     Public signals (see farewell-core/docs/proof-structure.md):
-      [0] recipient email commitment — Poseidon(PackBytes(recipient)), matching
-          the circuit and the site's on-chain commitment
+      [0] recipient email commitment — Poseidon(PackBytes(recipient), senderAddress),
+          matching the circuit and the site's on-chain commitment
       [1] DKIM public-key hash — PoseidonLarge(121,17) of the RSA modulus
       [2] payload content hash — keccak256 of the decrypted message body,
           echoed from the claim package (never recomputed locally)
@@ -806,7 +808,9 @@ def generate_proof_data(eml_content: str, recipient_email: str, content_hash: st
     are zeros — the proof will not pass on-chain verification.
     """
     recipient_normalized = recipient_email.lower().strip()
-    recipient_hash = keccak256_hex(recipient_normalized.encode())
+
+    # Standalone mode: placeholder hash (real proofs require external prover with circuit)
+    recipient_hash = "0x" + "00" * 32
 
     dkim_domain, dkim_selector = extract_dkim_domain_and_selector(eml_content)
     dkim_pubkey_hash = compute_dkim_pubkey_hash(dkim_domain, dkim_selector)
@@ -816,7 +820,7 @@ def generate_proof_data(eml_content: str, recipient_email: str, content_hash: st
     prover_cmd = os.environ.get("FAREWELL_PROVER_CMD", "").strip()
     if prover_cmd:
         external = run_external_prover(
-            prover_cmd, eml_content, recipient_normalized, content_hash, public_signals
+            prover_cmd, eml_content, recipient_normalized, content_hash, sender_address, public_signals
         )
         return {
             "pA": external["pA"],
@@ -1270,7 +1274,7 @@ This tool will help you:
         else:
             print_error("DKIM-Signature header missing — publicSignals[1] will be zero.")
         try:
-            proof = generate_proof_data(raw_msg, recipient, msg_info['content_hash'])
+            proof = generate_proof_data(raw_msg, recipient, msg_info['content_hash'], msg_info.get('owner', ''))
         except RuntimeError as e:
             print_error(f"Proof generation failed: {e}")
             results.append({"recipient": recipient, "success": False, "error": str(e)})
