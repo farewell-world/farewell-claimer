@@ -20,7 +20,7 @@ This eliminates the need for centralized delivery tracking while maintaining pri
 |                                                                          |
 |  1. MESSAGE CREATION (Sender on Farewell UI)                            |
 |     --> Encrypts message -> Stores recipients[].emailHash               |
-|         (Poseidon(PackBytes(normalized_email)))                         |
+|         (Poseidon(PackBytes(normalized_email), senderAddress))          |
 |         Stores payloadContentHash = keccak256(decrypted content)        |
 |                                                                          |
 |  2. MESSAGE RELEASE (After grace period, Council votes)                 |
@@ -109,13 +109,16 @@ The Groth16 circuit (`circuits/farewell_delivery.circom`) wraps `@zk-email/circu
 
 **Parameters:** `maxHeadersLength=1024, maxBodyLength=1024, maxRecipientBytes=256, n=121, k=17, markerLen=17`
 
-**Public Outputs:**
+**Public Outputs/Inputs:**
 
 | Index | Signal | Computation | On-chain check |
 |-------|--------|-------------|----------------|
-| `[0]` | `recipientHash` | `PoseidonModular(PackBytes(recipient_email_bytes))` | `== m.recipientEmailHashes[i]` |
+| `[0]` | `recipientHash` | `PoseidonModular(PackBytes(recipient_email_bytes), senderAddress)` | `== m.recipientEmailHashes[i]` |
 | `[1]` | `dkimKeyHash` | `PoseidonLarge(121,17)(rsa_pubkey_chunks)` -- native `@zk-email` pubkeyHash | `_isTrustedDkimKey(pubkeyHash)` |
 | `[2]` | `contentHash` | Decoded from `Farewell-Hash: 0x<64 hex>` in DKIM-signed body | `== m.payloadContentHash` |
+| `[3]` | `senderAddress` | Message creator's Ethereum address (public input to circuit) | `== message owner address` |
+
+**Salted Recipient Hash:** The recipient hash is salted with the sender's Ethereum address (`senderAddress`) to prevent dictionary attacks. Without the salt, an attacker could precompute Poseidon hashes of common email addresses and match them against on-chain commitments across all users. The salt ensures that the same email address produces different hashes for different senders. The circuit declaration uses `{public [senderAddress]}` to expose the sender address as a public input.
 
 **Content Hash Body Binding:** The circuit extracts the marker `Farewell-Hash: 0x` (17 bytes) from the DKIM-signed email body at a prover-supplied offset (`contentHashMarkerStart`), ASCII-hex-decodes the following 64 lowercase hex characters into a 256-bit value, and constrains it to equal the private `contentHashIn` input.
 
@@ -137,7 +140,7 @@ When `_verifyZkEmailProof()` is called:
 |  2. For each recipient in recipients[]:                       |
 |     +------------------------------------------------------+  |
 |     | a. publicSignals[0] == m.recipientEmailHashes[i]?    |  |
-|     |    (Proves correct recipient -- Poseidon commitment) |  |
+|     |    (Proves correct recipient -- salted Poseidon)     |  |
 |     |                                                      |  |
 |     | b. Is publicSignals[1] in trustedDkimKeys registry?  |  |
 |     |    (Proves authentic DKIM signature)                 |  |
@@ -145,7 +148,10 @@ When `_verifyZkEmailProof()` is called:
 |     | c. publicSignals[2] == m.payloadContentHash?         |  |
 |     |    (Proves correct message content)                  |  |
 |     |                                                      |  |
-|     | d. Verify(proof, verificationKey) == true?           |  |
+|     | d. publicSignals[3] == owner?                        |  |
+|     |    (Proves correct sender -- binds to user)          |  |
+|     |                                                      |  |
+|     | e. Verify(proof, verificationKey) == true?           |  |
 |     |    (Groth16 proof -- FarewellGroth16Verifier)        |  |
 |     |                                                      |  |
 |     | If ALL checks pass:                                  |  |
@@ -181,7 +187,8 @@ The proof JSON uploaded to the contract for each recipient:
         "publicSignals": [
           "0x1234...",
           "0x5678...",
-          "0xabcd..."
+          "0xabcd...",
+          "0xdead..."
         ]
       }
     }
@@ -195,7 +202,7 @@ The proof JSON uploaded to the contract for each recipient:
 
 **Field Descriptions:**
 - `pA`, `pB`, `pC`: Groth16 proof elliptic curve points (BN254)
-- `publicSignals`: The 3 public signals output by the circuit
+- `publicSignals`: The 4 public signals: `[recipientHash, dkimKeyHash, contentHash, senderAddress]`
 - `recipientIndex`: Position in the original recipients[] array
 - `email`: Recipient email address (for reference and verification)
 
@@ -237,12 +244,12 @@ The claimer calls `generate_proof_data()` per recipient. When the env var
 `FAREWELL_PROVER_CMD` is set, we shell out to that command and expect it to
 produce the full Groth16 proof:
 
-- **stdin**: a single line of JSON `{"recipient":..., "contentHash":..., "contentHashMarkerStart":..., "publicSignals":[...]}`
+- **stdin**: a single line of JSON `{"recipient":..., "contentHash":..., "contentHashMarkerStart":..., "senderAddress":..., "publicSignals":[...]}`
   followed by the raw .eml bytes. `contentHashMarkerStart` is the byte offset of
   `Farewell-Hash: 0x` in the raw body; the prover may need to adjust for DKIM
-  canonicalization and SHA precompute split.
+  canonicalization and SHA precompute split. `senderAddress` is the message creator's Ethereum address (used as salt for the recipient hash).
 - **stdout**: a JSON object with `pA` (uint256[2]), `pB` (uint256[2][2]), `pC` (uint256[2]),
-  and `publicSignals` (the 3 circuit outputs as hex strings).
+  and `publicSignals` (the 4 circuit outputs as hex strings: recipientHash, dkimKeyHash, contentHash, senderAddress).
 - Non-zero exit, malformed JSON, or missing fields raise `RuntimeError` and
   abort the claim flow.
 
@@ -267,7 +274,8 @@ or downloaded from the GitHub Release).
 
 **Proven:**
 - Email was signed by a DKIM-verified server (no forgery possible)
-- Recipient email matches on-chain Poseidon commitment (no address spoofing)
+- Recipient email matches on-chain salted Poseidon commitment (no address spoofing, no cross-user dictionary attacks)
+- Sender address in proof matches the message owner (prevents proof reuse across users)
 - DKIM public key is in the trusted registry (authentic provider)
 - Groth16 proof is valid (circuit constraints satisfied)
 
