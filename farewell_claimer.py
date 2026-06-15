@@ -77,9 +77,8 @@ def keccak256_hex(data: bytes) -> str:
     """Keccak-256 of bytes, returned as 0x-prefixed hex string.
 
     Uses eth_utils.keccak if available. This is the same hash the Farewell
-    site uses for on-chain email commitments (see packages/site/lib/delivery/
-    zkemail.ts:computeEmailHash), so proofs produced by the claimer line up
-    with the commitments the contract stores.
+    site uses for on-chain email commitments, so proofs produced by the
+    claimer line up with the commitments the contract stores.
     """
     if _keccak is None:
         raise RuntimeError(
