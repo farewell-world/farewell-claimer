@@ -76,7 +76,12 @@ async function main() {
         maxHeadersLength: 1024,
         maxBodyLength: 1024,
         ignoreBodyHashCheck: false,
-        removeSoftLineBreaks: false,
+        // Providers quoted-printable-encode the body and soft-wrap at 76 cols,
+        // splitting the 81-char "Farewell-Hash: 0x"+64hex marker. The circuit
+        // (removeSoftLineBreaks=1) verifies the DKIM body hash over the raw body
+        // but strips soft breaks before marker extraction, so we must supply the
+        // decoded body and extract the marker offset from it.
+        removeSoftLineBreaks: true,
       },
     );
   } catch (e) {
@@ -100,12 +105,26 @@ async function main() {
   // Content hash as a field element (strip 0x, parse as BigInt)
   const contentHashBigInt = BigInt(contentHash);
 
+  // Locate the "Farewell-Hash: 0x" marker in the DECODED body (soft line breaks
+  // removed). The circuit reads markerLen+64 contiguous bytes from this offset.
+  if (!circuitInputs.decodedEmailBodyIn) {
+    fatal("decodedEmailBodyIn missing — @zk-email/helpers must support removeSoftLineBreaks");
+  }
+  const decodedBody = Buffer.from(
+    circuitInputs.decodedEmailBodyIn.map(Number),
+  ).toString("latin1");
+  const markerStart = decodedBody.indexOf("Farewell-Hash: 0x");
+  if (markerStart === -1) {
+    fatal("'Farewell-Hash: 0x' marker not found in the decoded email body");
+  }
+
   // Build complete circuit input
   const fullInput = {
     ...circuitInputs,
     recipientEmailStart: recipientStart.toString(),
     recipientEmailLength: normalizedRecipient.length.toString(),
     contentHashIn: contentHashBigInt.toString(),
+    contentHashMarkerStart: markerStart.toString(),
     senderAddress: BigInt(senderAddress).toString(),
   };
 
