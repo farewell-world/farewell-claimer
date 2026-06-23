@@ -1,6 +1,11 @@
 #!/usr/bin/env node
 /**
- * prove_zkemail.mjs — snarkjs Groth16 prover for Farewell delivery proofs.
+ * prove_zkemail.mjs — Groth16 prover for Farewell delivery proofs.
+ *
+ * Computes the witness with the wasm calculator (light) and proves with
+ * rapidsnark (lean C++ prover, ~a few GB vs snarkjs's ~20 GB). Set
+ * RAPIDSNARK_PATH to the `prover` binary (default: "rapidsnark" on PATH).
+ * FAREWELL_USE_SNARKJS=1 falls back to snarkjs's pure-JS prover.
  *
  * Called by farewell_claimer.py via FAREWELL_PROVER_CMD. Reads:
  *   - First line of stdin: JSON {"recipient", "contentHash", "publicSignals"}

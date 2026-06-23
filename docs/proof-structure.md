@@ -263,12 +263,18 @@ It requires circuit artifacts at `tools/artifacts/farewell_delivery.wasm` and
 `tools/artifacts/farewell_delivery_final.zkey` (symlinked from farewell-core build output
 or downloaded from the GitHub Release).
 
+It computes the witness with the wasm calculator and proves with **rapidsnark**
+(a lean C++ Groth16 prover) — ~a few GB of RAM versus snarkjs's ~20 GB, so
+proving runs on modest hardware. Point `RAPIDSNARK_PATH` at the `prover` binary
+(default: `rapidsnark` on `PATH`); set `FAREWELL_USE_SNARKJS=1` to fall back to
+the pure-JS snarkjs prover if rapidsnark is unavailable.
+
 ## Deployed Contracts (Sepolia)
 
 | Contract | Address |
 |----------|---------|
-| Farewell (proxy) | `0xe59562a989Cc656ec4400902D59cf34A72041c22` |
-| FarewellGroth16Verifier | `0xF73400562fc1EFf15de8F4b6be142b7B9d66bD01` |
+| Farewell (proxy) | `0x97c3920d82069eFc8CF15292453E104C35AF8ECa` |
+| FarewellGroth16Verifier | `0xc63cB10e9CC7f43A83007d6baBAC13a49E5ca389` |
 
 ## Security Properties
 
