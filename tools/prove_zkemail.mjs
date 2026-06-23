@@ -13,11 +13,13 @@
  *   artifacts/farewell_delivery_final.zkey
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, mkdtempSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { createInterface } from "node:readline";
-import snarkjs from "snarkjs";
+import * as snarkjs from "snarkjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WASM_PATH = join(__dirname, "artifacts", "farewell_delivery.wasm");
@@ -128,18 +130,35 @@ async function main() {
     senderAddress: BigInt(senderAddress).toString(),
   };
 
-  // Generate Groth16 proof
+  // Generate the proof with rapidsnark (lean C++ Groth16 prover): compute the
+  // witness with the wasm calculator (light — ~hundreds of MB), then prove with
+  // rapidsnark, which needs only a few GB vs snarkjs's ~20GB. This keeps proving
+  // feasible on modest hardware (a Pi / a normal claimer's laptop).
+  // Set RAPIDSNARK_PATH to the rapidsnark `prover` binary (default: "rapidsnark").
+  const RAPIDSNARK = process.env.RAPIDSNARK_PATH || "rapidsnark";
   let proof, publicSignals;
+  const work = mkdtempSync(join(tmpdir(), "farewell-prove-"));
   try {
-    const result = await snarkjs.groth16.fullProve(
-      fullInput,
-      WASM_PATH,
-      ZKEY_PATH,
-    );
-    proof = result.proof;
-    publicSignals = result.publicSignals;
+    const wtns = join(work, "witness.wtns");
+    await snarkjs.wtns.calculate(fullInput, WASM_PATH, wtns);
+    const proofPath = join(work, "proof.json");
+    const publicPath = join(work, "public.json");
+    execFileSync(RAPIDSNARK, [ZKEY_PATH, wtns, proofPath, publicPath], { stdio: "pipe" });
+    proof = JSON.parse(readFileSync(proofPath, "utf-8"));
+    publicSignals = JSON.parse(readFileSync(publicPath, "utf-8"));
   } catch (e) {
-    fatal(`proof generation failed: ${e.message}`);
+    if (process.env.FAREWELL_USE_SNARKJS === "1") {
+      const result = await snarkjs.groth16.fullProve(fullInput, WASM_PATH, ZKEY_PATH);
+      proof = result.proof;
+      publicSignals = result.publicSignals;
+    } else {
+      fatal(
+        `rapidsnark proving failed — is rapidsnark installed / on PATH (or RAPIDSNARK_PATH set)? ` +
+          `Set FAREWELL_USE_SNARKJS=1 to use the heavy JS prover instead. ${e.message}`,
+      );
+    }
+  } finally {
+    try { rmSync(work, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 
   // Format output for Farewell contract (pA/pB/pC as hex strings)
